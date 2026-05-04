@@ -1,632 +1,2196 @@
 /* eslint-disable no-undef */
 /**
- * Rosco Activity iDevice (Export)
+ * Crucigrama activity (Export)
  *
  * Released under Attribution-ShareAlike 4.0 International License.
- *
  * Author: Manuel Narváez Martínez
- * Author: Ricardo Málaga Floriano
- * Author: Ignacio Gros
- * Iconos: Ana María Zamora Moreno y Francisco Javier Pulido
+ * Dieño: Ana María Zamora Moreno
  * License: http://creativecommons.org/licenses/by-sa/4.0/
  *
  */
-
-var $azquizgame = {
+var $eXeCrucigrama = {
     idevicePath: '',
-    mcanvas: {
-        width: 360,
-        height: 360,
+    borderColors: {
+        black: '#0e1625',
+        blue: '#4A90E2',
+        green: '#66BB6A',
+        red: '#FF6F61',
+        white: '#FFF',
+        deepblue: '#3A75C4',
     },
     colors: {
-        black: '#f9f9f9',
-        blue: '#5877c6',
-        green: '#00a300',
-        red: '#b3092f',
+        black: '#0e1625',
+        blue: '#4A90E2',
+        green: '#66BB6A',
+        red: '#FF6F61',
         white: '#ffffff',
-        yellow: '#f3d55a',
-        blackl: '#333333',
+        deepblue: '#3A75C4',
+        grey: '#777777',
+        incorrect: '#F22420',
+        correct: '#3DA75A',
+        game: 'rgba(0, 255, 0, 0.3)',
     },
-    letters: '',
-    angleSize: '',
-    radiusLetter: 16,
     options: [],
-    msgs: {},
+    domCache: {},
+    inputCache: {},
     hasSCORMbutton: false,
     isInExe: false,
     userName: '',
     previousScore: '',
     initialScore: '',
-    started: false,
     scormAPIwrapper: 'libs/SCORM_API_wrapper.js',
     scormFunctions: 'libs/SCOFunctions.js',
     mScorm: null,
     init: function () {
         $exeDevices.iDevice.gamification.initGame(
             this,
-            'A-Z quiz',
-            'az-quiz-game',
-            'rosco-IDevice'
+            'Crossword',
+            'crossword',
+            'crucigrama-IDevice'
         );
     },
 
-    enable: function () {
-        $azquizgame.loadGame();
+    initDOMCache: function (instance) {
+        if (!this.domCache[instance]) {
+            this.domCache[instance] = {
+                crossword: $('#ccgmCrossword-' + instance),
+                definitionsVList: $('#ccgmDefinitionsVList-' + instance),
+                definitionsHList: $('#ccgmDefinitionsHList-' + instance),
+                activeDefinition: $('#ccgmActiveDefinition-' + instance),
+                mainContainer: $('#ccgmMainContainer-' + instance),
+            };
+        }
+        return this.domCache[instance];
     },
 
-    loadGame: function () {
-        $azquizgame.options = [];
+    cacheInputsByPosition: function (instance) {
+        if (!this.inputCache[instance]) {
+            this.inputCache[instance] = {
+                byPosition: {},
+                byWordIndex: { vi: {}, hi: {} },
+            };
+        }
 
-        $('.rosco-IDevice').each(function (i) {
-            const dl = $('.rosco-DataGame', this);
-            if (dl.length === 0) return; // Skip already initialized activities
-            const version = $('.rosco-version', this).eq(0).text(),
-                imagesLink = $('.rosco-LinkImages', this),
-                audiosLink = $('.rosco-LinkAudios', this),
-                option = $azquizgame.loadDataGame(
-                    dl,
-                    imagesLink,
-                    audiosLink,
-                    version
+        const cache = this.inputCache[instance];
+        const $crossword = this.domCache[instance].crossword;
+
+        $crossword.find('input').each(function () {
+            const $input = $(this);
+            const row = $input.data('row');
+            const col = $input.data('col');
+            const vi = $input.data('vi');
+            const hi = $input.data('hi');
+            const lvi = $input.data('lvi');
+            const lhi = $input.data('lhi');
+
+            cache.byPosition[`${row}-${col}`] = $input;
+
+            if (vi !== -1 && lvi !== -1) {
+                if (!cache.byWordIndex.vi[vi]) cache.byWordIndex.vi[vi] = {};
+                cache.byWordIndex.vi[vi][lvi] = $input;
+            }
+            if (hi !== -1 && lhi !== -1) {
+                if (!cache.byWordIndex.hi[hi]) cache.byWordIndex.hi[hi] = {};
+                cache.byWordIndex.hi[hi][lhi] = $input;
+            }
+        });
+    },
+
+    getCachedInput: function (instance, row, col) {
+        const cache = this.inputCache[instance];
+        return (cache && cache.byPosition[`${row}-${col}`]) || $();
+    },
+
+    getCachedInputByWordLetter: function (
+        instance,
+        wordindex,
+        letterindex,
+        isHorizontal
+    ) {
+        const cache = this.inputCache[instance];
+        if (!cache) return $();
+
+        const direction = isHorizontal ? 'hi' : 'vi';
+        return (
+            (cache.byWordIndex[direction][wordindex] &&
+                cache.byWordIndex[direction][wordindex][letterindex]) ||
+            $()
+        );
+    },
+
+    cleanupInstance: function (instance) {
+        if (this.domCache[instance]) {
+            this.domCache[instance].crossword.off('.crossword-events');
+        }
+
+        delete this.domCache[instance];
+        delete this.inputCache[instance];
+    },
+
+    generateCrossword: function (instance) {
+        let mOptions = $eXeCrucigrama.options[instance];
+
+        this.initDOMCache(instance);
+        const cache = this.domCache[instance];
+        let type = 0;
+
+        cache.crossword.empty();
+        cache.definitionsHList.empty();
+        cache.definitionsVList.empty();
+
+        mOptions.grid = Array(mOptions.boardSize)
+            .fill()
+            .map(() => Array(mOptions.boardSize).fill(null));
+        mOptions.mappedWords = [];
+        mOptions.occupiedRows.clear();
+        mOptions.occupiedColumns.clear();
+
+        const verticalWords = mOptions.wordsGame.slice(0, mOptions.half),
+            horizontalWords = mOptions.wordsGame.slice(mOptions.half);
+
+        $eXeCrucigrama.placeVerticalWords(instance, verticalWords);
+        $eXeCrucigrama.placeHorizontalWords(instance, horizontalWords);
+
+        let lettersShow = {};
+        mOptions.wordsGame.forEach((wordObj, index) => {
+            let sindices = $eXeCrucigrama.calculateLettersToShow(
+                instance,
+                wordObj.word
+            );
+            lettersShow[index] = sindices;
+        });
+
+        for (let row = 0; row < mOptions.boardSize; row++) {
+            for (let col = 0; col < mOptions.boardSize; col++) {
+                const $cell = $('<div>').addClass('CCGMP-Cell');
+                if (mOptions.grid[row][col]) {
+                    const cellData = mOptions.grid[row][col];
+                    const hasHorizontal =
+                        cellData.hi !== undefined && cellData.hi !== -1;
+                    const hasVertical =
+                        cellData.vi !== undefined && cellData.vi !== -1;
+
+                    // Para determinar el wordindex principal (usado en data-wordindex)
+                    const wordindex = hasHorizontal ? cellData.hi : cellData.vi,
+                        indexLetter = hasHorizontal
+                            ? cellData.lhi
+                            : cellData.lvi,
+                        word = mOptions.wordsGame[wordindex].word;
+
+                    // Verificar si la letra debe mostrarse en cualquiera de las palabras
+                    let shouldShowLetter = false;
+                    if (hasHorizontal && lettersShow[cellData.hi]) {
+                        shouldShowLetter = lettersShow[cellData.hi].includes(
+                            cellData.lhi
+                        );
+                    }
+                    if (
+                        !shouldShowLetter &&
+                        hasVertical &&
+                        lettersShow[cellData.vi]
+                    ) {
+                        shouldShowLetter = lettersShow[cellData.vi].includes(
+                            cellData.lvi
+                        );
+                    }
+
+                    const $input = $('<input>').attr({
+                        'data-row': row,
+                        'data-col': col,
+                        'data-wordindex': wordindex,
+                        'data-hi':
+                            mOptions.grid[row][col].hi !== undefined
+                                ? mOptions.grid[row][col].hi
+                                : -1,
+                        'data-vi':
+                            mOptions.grid[row][col].vi !== undefined
+                                ? mOptions.grid[row][col].vi
+                                : -1,
+                        'data-lhi':
+                            mOptions.grid[row][col].lhi !== undefined
+                                ? mOptions.grid[row][col].lhi
+                                : -1,
+                        'data-lvi':
+                            mOptions.grid[row][col].lvi !== undefined
+                                ? mOptions.grid[row][col].lvi
+                                : -1,
+                        readonly: true,
+                    });
+                    if (shouldShowLetter) {
+                        $input.val(word[indexLetter]);
+                    }
+                    $input.addClass('ccgm-input');
+                    $cell.append($input);
+                    if (mOptions.grid[row][col].numero) {
+                        const $number = $('<span>')
+                            .addClass('CCGMP-Number')
+                            .text(Math.floor(mOptions.grid[row][col].numero));
+                        $cell.append($number);
+                    }
+                } else {
+                    const $input = $('<span>').prop('disabled', true);
+                    $cell.append($input);
+                }
+                cache.crossword.append($cell);
+            }
+        }
+
+        this.cacheInputsByPosition(instance);
+
+        this.setupEventDelegation(instance);
+
+        if (mOptions.hasBack) {
+            const backgroundIconHTML = `
+            <a  href="#" class="CCGMP-ToggleBackground" id="ccgmBackgroundIcon-${instance}" title="${mOptions.msgs.msgShowBack}">
+                <strong class="sr-av">${mOptions.msgs.msgShowBack}</strong>
+                <div class="CCGMP-IconsToolBar exeQuextIcons-background  CCGMP-Activo"></div>
+             </a>`;
+
+            cache.crossword.append(backgroundIconHTML);
+
+            $(`#ccgmBackgroundIcon-${instance}`).on('click', function (e) {
+                e.preventDefault();
+                cache.crossword.toggleClass('CCGMP-NoBackground');
+            });
+
+            const backgroundUrl =
+                mOptions.urlBack.length < 4
+                    ? `${$eXeCrucigrama.idevicePath}ccgmbackground.jpg`
+                    : `${mOptions.urlBack}`;
+
+            cache.crossword.css({
+                'background-image': `url(${backgroundUrl})`,
+            });
+        } else {
+            cache.crossword.addClass('CCGMP-NoBackground');
+        }
+        $eXeCrucigrama.createDefinitionsList(instance);
+    },
+
+    setupEventDelegation: function (instance) {
+        const mOptions = $eXeCrucigrama.options[instance];
+        const cache = this.domCache[instance];
+
+        cache.crossword.off('.crossword-events');
+
+        cache.crossword.on(
+            'focus.crossword-events',
+            '.ccgm-input',
+            function (e) {
+                if (!mOptions.gameStarted) {
+                    e.preventDefault();
+                    return;
+                }
+                if ($(this).siblings('.CCGMP-Number').length > 0) {
+                    const hi = parseInt($(this).data('hi')),
+                        vi = parseInt($(this).data('vi')),
+                        wordindex = hi !== -1 ? parseInt(hi) : parseInt(vi),
+                        type = hi !== -1 ? true : false;
+                    $eXeCrucigrama.highlightWord(instance, wordindex, type);
+                    mOptions.activeQuestion = wordindex;
+                }
+            }
+        );
+
+        cache.crossword.on(
+            'compositionstart.crossword-events',
+            '.ccgm-input',
+            function () {
+                mOptions._imeComposing = true;
+            }
+        );
+
+        cache.crossword.on(
+            'compositionend.crossword-events',
+            '.ccgm-input',
+            function () {
+                mOptions._imeComposing = false;
+                $(this).trigger('input');
+            }
+        );
+
+        cache.crossword.on(
+            'keydown.crossword-events',
+            '.ccgm-input',
+            function (e) {
+                if (!mOptions.gameStarted) {
+                    e.preventDefault();
+                    return;
+                }
+
+                if (
+                    e.isComposing ||
+                    (e.originalEvent && e.originalEvent.isComposing) ||
+                    e.keyCode === 229 ||
+                    e.key === 'Dead' ||
+                    mOptions._imeComposing
+                ) {
+                    return;
+                }
+
+                const $this = $(this);
+                const row = parseInt($this.data('row'));
+                const col = parseInt($this.data('col'));
+                const hi = $this.data('hi');
+                const vi = $this.data('vi');
+                let nextRow = row,
+                    nextCol = col;
+
+                if (e.key === 'Tab') {
+                    $exeDevices.iDevice.gamification.media.stopSound();
+                    e.preventDefault();
+                    let active = mOptions.activeQuestion;
+                    active++;
+                    mOptions.activeQuestion =
+                        active >= mOptions.wordsGame.length ? 0 : active;
+                    let wordindex = mOptions.activeQuestion,
+                        mappedWord = mOptions.mappedWords[wordindex];
+                    if (mappedWord && mappedWord.length > 0) {
+                        let firstRow = mappedWord[0].row,
+                            firstCol = mappedWord[0].col;
+                        const $firstInput = $eXeCrucigrama.getCachedInput(
+                            instance,
+                            firstRow,
+                            firstCol
+                        );
+                        if ($firstInput.length) {
+                            $firstInput.focus();
+                        }
+                    }
+                    $eXeCrucigrama.updateInputPresentation(
+                        instance,
+                        mOptions.activeQuestion
+                    );
+                    return;
+                }
+
+                $eXeCrucigrama.handleKeyNavigation(
+                    instance,
+                    e,
+                    $this,
+                    row,
+                    col,
+                    hi,
+                    vi,
+                    nextRow,
+                    nextCol
+                );
+            }
+        );
+
+        cache.crossword.on(
+            'input.crossword-events',
+            '.ccgm-input',
+            function () {
+                const $this = $(this);
+                const hi = $this.data('hi');
+                const vi = $this.data('vi');
+
+                if (mOptions._imeComposing) return;
+
+                let raw = ($this.val() || '').normalize('NFC');
+                const codepoints = Array.from(raw);
+                const lastChar = codepoints[codepoints.length - 1] || '';
+                const isValidLetterOrNumber = /[\p{L}\p{N}]/u.test(lastChar);
+
+                if (isValidLetterOrNumber) {
+                    $this.val(lastChar);
+                    $eXeCrucigrama.moveToNextInput(instance, $this, hi, vi);
+                    $eXeCrucigrama.updateInputPresentation(
+                        instance,
+                        mOptions.activeQuestion
+                    );
+                } else {
+                    $this.val('');
+                }
+            }
+        );
+
+        cache.crossword.on(
+            'click.crossword-events touchend.crossword-events',
+            '.ccgm-input',
+            function () {
+                if (!mOptions.gameStarted && !mOptions.gameOver) return;
+                const hi = parseInt($(this).data('hi'));
+                const vi = parseInt($(this).data('vi'));
+                let wordindex = hi !== -1 ? parseInt(hi) : parseInt(vi);
+                $eXeCrucigrama.showActiveDefinition(instance, wordindex);
+                $eXeCrucigrama.highlightWord(instance, wordindex, hi !== -1);
+                mOptions.activeQuestion = wordindex;
+                mOptions.focused = 0;
+            }
+        );
+    },
+
+    handleKeyNavigation: function (
+        instance,
+        e,
+        $input,
+        row,
+        col,
+        hi,
+        vi,
+        nextRow,
+        nextCol
+    ) {
+        const mOptions = $eXeCrucigrama.options[instance];
+
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            if (hi !== -1 && mOptions.activeQuestion >= mOptions.half) {
+                nextCol = col + 1;
+                if (
+                    nextCol >= mOptions.boardSize ||
+                    !mOptions.grid[row][nextCol] ||
+                    mOptions.grid[row][nextCol].hi !== hi
+                ) {
+                    nextCol = col;
+                }
+            } else if (vi !== -1 && mOptions.activeQuestion < mOptions.half) {
+                nextRow = row + 1;
+                if (
+                    nextRow >= mOptions.boardSize ||
+                    !mOptions.grid[nextRow][col] ||
+                    mOptions.grid[nextRow][col].vi !== vi
+                ) {
+                    nextRow = row;
+                }
+            }
+        } else if (
+            e.key === 'ArrowRight' &&
+            hi !== -1 &&
+            mOptions.activeQuestion >= mOptions.half
+        ) {
+            e.preventDefault();
+            nextCol = col + 1;
+            if (
+                nextCol >= mOptions.boardSize ||
+                !mOptions.grid[row][nextCol] ||
+                mOptions.grid[row][nextCol].hi !== hi
+            ) {
+                nextCol = col;
+            }
+        } else if (
+            e.key === 'ArrowLeft' &&
+            hi !== -1 &&
+            mOptions.activeQuestion >= mOptions.half
+        ) {
+            e.preventDefault();
+            nextCol = col - 1;
+            if (
+                nextCol < 0 ||
+                !mOptions.grid[row][nextCol] ||
+                mOptions.grid[row][nextCol].hi !== hi
+            ) {
+                nextCol = col;
+            }
+        } else if (
+            e.key === 'ArrowDown' &&
+            vi !== -1 &&
+            mOptions.activeQuestion < mOptions.half
+        ) {
+            e.preventDefault();
+            nextRow = row + 1;
+            if (
+                nextRow >= mOptions.boardSize ||
+                !mOptions.grid[nextRow][col] ||
+                mOptions.grid[nextRow][col].vi !== vi
+            ) {
+                nextRow = row;
+            }
+        } else if (
+            e.key === 'ArrowUp' &&
+            vi !== -1 &&
+            mOptions.activeQuestion < mOptions.half
+        ) {
+            e.preventDefault();
+            nextRow = row - 1;
+            if (
+                nextRow < 0 ||
+                !mOptions.grid[nextRow][col] ||
+                mOptions.grid[nextRow][col].vi !== vi
+            ) {
+                nextRow = row;
+            }
+        } else if (e.key === 'Backspace') {
+            e.preventDefault();
+            $input.val('');
+            if (vi !== -1 && mOptions.activeQuestion < mOptions.half) {
+                nextRow = row - 1;
+                if (
+                    nextRow < 0 ||
+                    !mOptions.grid[nextRow][col] ||
+                    mOptions.grid[nextRow][col].vi !== vi
+                ) {
+                    nextRow = row;
+                }
+            } else if (hi !== -1 && mOptions.activeQuestion >= mOptions.half) {
+                nextCol = col - 1;
+                if (
+                    nextCol < 0 ||
+                    !mOptions.grid[row][nextCol] ||
+                    mOptions.grid[row][nextCol].hi !== hi
+                ) {
+                    nextCol = col;
+                }
+            }
+            $eXeCrucigrama.updateInputPresentation(
+                instance,
+                mOptions.activeQuestion
+            );
+        } else if ($eXeCrucigrama.isIgnoredKey(e.key)) {
+            e.preventDefault();
+        }
+
+        const $nextInput = $eXeCrucigrama.getCachedInput(
+            instance,
+            nextRow,
+            nextCol
+        );
+        if ($nextInput.length) {
+            $nextInput.focus();
+        }
+    },
+
+    moveToNextInput: function (instance, $currentInput, hi, vi) {
+        const mOptions = $eXeCrucigrama.options[instance];
+        const row = parseInt($currentInput.data('row'));
+        const col = parseInt($currentInput.data('col'));
+        let nextRow = row,
+            nextCol = col;
+
+        if (mOptions.activeQuestion < mOptions.half) {
+            nextRow = row + 1;
+            if (
+                nextRow >= mOptions.boardSize ||
+                !mOptions.grid[nextRow][col] ||
+                mOptions.grid[nextRow][col].vi !== vi
+            ) {
+                nextRow = row;
+            }
+        } else if (mOptions.activeQuestion >= mOptions.half) {
+            nextCol = col + 1;
+            if (
+                nextCol >= mOptions.boardSize ||
+                !mOptions.grid[row][nextCol] ||
+                mOptions.grid[row][nextCol].hi !== hi
+            ) {
+                nextCol = col;
+            }
+        }
+
+        const $nextInput = this.getCachedInput(instance, nextRow, nextCol);
+        if ($nextInput.length) {
+            $nextInput.focus();
+        }
+    },
+
+    calculateLettersToShow: function (instance, word) {
+        const mOptions = $eXeCrucigrama.options[instance],
+            totalLetters = word.length,
+            percentageToShow = (100 - mOptions.difficulty) / 100,
+            lettersToShow = Math.floor(percentageToShow * totalLetters);
+
+        let indices = Array.from(Array(totalLetters).keys());
+        indices = indices
+            .sort(() => Math.random() - 0.5)
+            .slice(0, lettersToShow);
+        return indices;
+    },
+
+    highlightWord: function (instance, wordindex, type) {
+        const mOptions = $eXeCrucigrama.options[instance];
+
+        if (!this.domCache[instance]) {
+            this.initDOMCache(instance);
+        }
+        const cache = this.domCache[instance];
+
+        let bdcolor = mOptions.gameOver
+            ? `2px solid ${$eXeCrucigrama.colors.blue}`
+            : `1px solid #ccc`;
+
+        if (!mOptions.gameOver) {
+            cache.crossword.find('.CCGMP-Cell input').css({
+                'background-color': '#fff',
+                'font-weight': 'normal',
+                'border-color': '#ccc',
+            });
+        } else {
+            cache.crossword.find('.CCGMP-Cell input').css({
+                'border-color': '#ccc',
+            });
+        }
+
+        let $cells = $();
+        if (type) {
+            const wordCache =
+                this.inputCache[instance]?.byWordIndex?.hi?.[wordindex];
+            if (wordCache) {
+                $cells = $(Object.values(wordCache));
+            } else {
+                $cells = cache.crossword.find(`input[data-hi='${wordindex}']`);
+            }
+        } else {
+            const wordCache =
+                this.inputCache[instance]?.byWordIndex?.vi?.[wordindex];
+            if (wordCache) {
+                $cells = $(Object.values(wordCache));
+            } else {
+                $cells = cache.crossword.find(`input[data-vi='${wordindex}']`);
+            }
+        }
+
+        $cells.each(function (index) {
+            const $input = $(this);
+            if (type) {
+                $input.css({
+                    'border-top': bdcolor,
+                    'border-bottom': bdcolor,
+                });
+                if (index === 0) {
+                    $input.css('border-left', bdcolor);
+                }
+                if (index === $cells.length - 1) {
+                    $input.css('border-right', bdcolor);
+                }
+            } else {
+                $input.css({
+                    'border-left': bdcolor,
+                    'border-right': bdcolor,
+                });
+                if (index === 0) {
+                    $input.css('border-top', bdcolor);
+                }
+                if (index === $cells.length - 1) {
+                    $input.css('border-bottom', bdcolor);
+                }
+            }
+            if (!mOptions.gameOver) {
+                $input.css({
+                    'background-color': $eXeCrucigrama.colors.blue,
+                    'font-weight': 'bold',
+                    'border-color': bdcolor,
+                });
+            }
+        });
+    },
+
+    showActiveDefinition: function (instance, wordindex) {
+        const mOptions = $eXeCrucigrama.options[instance],
+            $activeDefinition = $('#ccgmActiveDefinition-' + instance);
+
+        wordindex = parseInt(wordindex);
+
+        const readonly = mOptions.gameOver ? 'readonly' : '',
+            input = `<label for="ccgmInputWord-${instance}" ${readonly} class="sr-av">${mOptions.msgs.msgSolutionWord}:</label> 
+                    <input id="ccgmInputWord-${wordindex}"  data-number="${wordindex}" type="text" value="${mOptions.wordsGame[wordindex].word.replace(/./g, '_')}" class="CCGMP-InputWord" / >`,
+            showimg =
+                mOptions.wordsGame[wordindex].url.length > 3 ? 'block' : 'none',
+            image = `<a href="#" data-number="${wordindex}" id="ccgmImageWord-${instance}" class="CCGMP-LinkImage" title="Imagen" style="display:"${showimg}">
+                  <div class="CCGMP-Icons CCGMP-IconImage CCGMP-Activo"></div>
+                  </a>`,
+            showaudio =
+                mOptions.wordsGame[wordindex].audio.length > 3
+                    ? 'block'
+                    : 'none',
+            sound = `<a href="#" data-number="${wordindex}" id="ccgmImageSound-${instance}" class="CCGMP-LinkSound" title="Audio" style="display:"${showaudio}">
+                  <div class="CCGMP-Icons CCGMP-IconAudio CCGMP-Activo"></div>
+               </a>`,
+            showdef =
+                mOptions.wordsGame[wordindex].definition.length > 0
+                    ? 'block'
+                    : 'none',
+            definition = `<span class="CCGMP-WordDefinition"  style="display:"${showdef}">${mOptions.wordsGame[wordindex].definition}</span>`,
+            tdefinition = `<span class="CCGMP-NumberDefinition">${wordindex + 1}</span>.-${input}${image}${sound}${definition}`;
+
+        $activeDefinition.html(tdefinition);
+
+        $('#ccgmLinkSound-' + instance).hide();
+        if (
+            mOptions.wordsGame[wordindex].audio &&
+            mOptions.wordsGame[wordindex].audio.length > 3
+        ) {
+            $('#ccgmLinkSound-' + instance).show();
+        }
+
+        $eXeCrucigrama.updateInputPresentation(instance, wordindex);
+        $exeDevices.iDevice.gamification.media.stopSound();
+
+        $('#ccgmActiveDefinition-' + instance).show();
+    },
+
+    updateInputPresentation(instance, wordindex) {
+        const mOptions = $eXeCrucigrama.options[instance];
+
+        if (!this.domCache[instance]) {
+            this.initDOMCache(instance);
+        }
+        const cache = this.domCache[instance];
+
+        if (typeof wordindex !== 'undefined') {
+            const word = mOptions.wordsGame[wordindex].word;
+            const isHorizontal = wordindex >= mOptions.half;
+
+            let wordWithUnderscores = '';
+            for (let index = 0; index < word.length; index++) {
+                const $input = this.getCachedInputByWordLetter(
+                    instance,
+                    wordindex,
+                    index,
+                    isHorizontal
+                );
+                wordWithUnderscores +=
+                    $input.length > 0 && $input.val() ? $input.val() : '_';
+            }
+
+            const $activeDefinition = cache.activeDefinition;
+            $activeDefinition
+                .find('input.CCGMP-InputWord')
+                .val(wordWithUnderscores);
+            $activeDefinition
+                .find('.CCGMP-NumberDefinition')
+                .text(wordindex + 1);
+            $activeDefinition
+                .find('.CCGMP-WordDefinition')
+                .html(mOptions.wordsGame[wordindex].definition);
+
+            const $linkImage = $activeDefinition.find('.CCGMP-LinkImage');
+            const $linkSound = $activeDefinition.find('.CCGMP-LinkSound');
+
+            $linkImage.hide().data('number', wordindex);
+            $linkSound.hide().data('number', wordindex);
+            $activeDefinition.find('.CCGMP-WordDefinition').hide();
+            $activeDefinition
+                .find('.input.CCGMP-InputWord')
+                .prop('readonly', false);
+
+            $('#ccgmLinkSound-' + instance).hide();
+            if (mOptions.wordsGame[wordindex].url.length > 3) {
+                $linkImage.show();
+            }
+            if (
+                mOptions.wordsGame[wordindex].audio &&
+                mOptions.wordsGame[wordindex].audio.length > 3
+            ) {
+                $linkSound.show();
+                $('#ccgmLinkSound-' + instance).show();
+            }
+            if (mOptions.wordsGame[wordindex].definition.length > 0) {
+                $activeDefinition.find('.CCGMP-WordDefinition').show();
+            }
+            if (mOptions.gameOver) {
+                $activeDefinition
+                    .find('.input.CCGMP-InputWord')
+                    .prop('readonly', true);
+            }
+        }
+    },
+
+    updateInputs: function (instance, active) {
+        const mOptions = $eXeCrucigrama.options[instance],
+            $main = $('#ccgmMultimediaDiv-' + instance);
+        for (let i = 0; i < mOptions.wordsGame.length; i++) {
+            let wordWithUnderscores = mOptions.wordsGame[i].word
+                .split('')
+                .map((char, index) => {
+                    let $lvi = $main.find(
+                            `input[data-vi="${i}"][data-lvi="${index}"]`
+                        ),
+                        $lhi = $main.find(
+                            `input[data-hi="${i}"][data-lhi="${index}"]`
+                        ),
+                        $input = i < mOptions.half ? $lvi : $lhi;
+                    return $input.length > 0 && $input.val()
+                        ? $input.val()
+                        : '_';
+                })
+                .join('');
+            if (active !== i) {
+                let $inputWord = $main.find(
+                    `input.CCGMP-InputWordDef[data-number="${i}"]`
+                );
+                $inputWord.val(wordWithUnderscores);
+            }
+        }
+    },
+
+    placeVerticalWords: function (instance, verticalWords) {
+        const mOptions = $eXeCrucigrama.options[instance],
+            centroCol = Math.floor(mOptions.boardSize / 2);
+
+        let offset = $eXeCrucigrama.randomTwoOrThree();
+
+        $eXeCrucigrama.placeVerticalWord(
+            instance,
+            centroCol,
+            mOptions.grid,
+            verticalWords[0],
+            1
+        );
+
+        for (let i = 1; i <= Math.floor(verticalWords.length / 2); i++) {
+            let rightCol = centroCol - offset;
+            if (rightCol < mOptions.boardSize) {
+                $eXeCrucigrama.placeVerticalWord(
+                    instance,
+                    rightCol,
+                    mOptions.grid,
+                    verticalWords[i],
+                    i + 1
+                );
+            }
+            offset += $eXeCrucigrama.randomTwoOrThree();
+        }
+
+        offset = $eXeCrucigrama.randomTwoOrThree();
+        for (
+            let i = Math.floor(verticalWords.length / 2) + 1;
+            i < verticalWords.length;
+            i++
+        ) {
+            let leftCol = centroCol + offset;
+            if (leftCol >= 0) {
+                $eXeCrucigrama.placeVerticalWord(
+                    instance,
+                    leftCol,
+                    mOptions.grid,
+                    verticalWords[i],
+                    i + 1
+                );
+            }
+            offset += $eXeCrucigrama.randomTwoOrThree();
+        }
+    },
+
+    canPlaceVerticalWord: function (instance, col) {
+        let mOptions = $eXeCrucigrama.options[instance];
+        return (
+            !mOptions.occupiedColumns.has(col) &&
+            !mOptions.occupiedColumns.has(col - 1) &&
+            !mOptions.occupiedColumns.has(col + 1)
+        );
+    },
+
+    randomTwoOrThree: function () {
+        return Math.random() < 0.5 ? 2 : 3;
+    },
+
+    placeVerticalWord: function (instance, col, grid, wordObj, numero) {
+        const mOptions = $eXeCrucigrama.options[instance],
+            row = Math.floor((mOptions.boardSize - wordObj.word.length) / 2);
+
+        $eXeCrucigrama.placeWord(
+            instance,
+            wordObj.word,
+            row,
+            col,
+            false,
+            grid,
+            numero,
+            numero - 1
+        );
+
+        mOptions.occupiedColumns.add(col);
+        mOptions.occupiedColumns.add(col - 1);
+        mOptions.occupiedColumns.add(col + 1);
+    },
+
+    placeWord: function (
+        instance,
+        word,
+        row,
+        col,
+        horizontal,
+        grid,
+        numero,
+        wordindex
+    ) {
+        let mOptions = $eXeCrucigrama.options[instance];
+        if (horizontal) {
+            wordindex += mOptions.half;
+        }
+
+        mOptions.mappedWords[wordindex] = [];
+        if (!horizontal) {
+            grid[row][col] = {
+                letter: word[0],
+                numero,
+                wordindex,
+                lvi: 0,
+                hi: -1,
+                vi: wordindex,
+            };
+            mOptions.mappedWords[wordindex].push({ row, col });
+            for (let i = 1; i < word.length; i++) {
+                grid[row + i][col] = {
+                    letter: word[i],
+                    wordindex,
+                    lvi: i,
+                    hi: -1,
+                    vi: wordindex,
+                };
+                mOptions.mappedWords[wordindex].push({ row: row + i, col });
+            }
+        } else {
+            if (grid[row][col] && typeof grid[row][col].vi != 'undefined') {
+                grid[row][col].letter = word[0];
+                grid[row][col].wordindex = wordindex;
+                grid[row][col].hi = wordindex;
+                grid[row][col].lhi = 0;
+            } else {
+                grid[row][col] = {
+                    letter: word[0],
+                    numero,
+                    wordindex,
+                    lhi: 0,
+                    hi: wordindex,
+                };
+            }
+            mOptions.mappedWords[wordindex].push({ row, col });
+            for (let i = 1; i < word.length; i++) {
+                if (
+                    grid[row][col + i] &&
+                    typeof grid[row][col + i].vi != 'undefined'
+                ) {
+                    grid[row][col + i].letter = word[i];
+                    grid[row][col + i].wordindex = wordindex;
+                    grid[row][col + i].hi = wordindex;
+                    grid[row][col + i].lhi = i;
+                } else {
+                    grid[row][col + i] = {
+                        letter: word[i],
+                        wordindex,
+                        lhi: i,
+                        hi: wordindex,
+                        vi: -1,
+                    };
+                }
+                mOptions.mappedWords[wordindex].push({ row, col: col + i });
+            }
+        }
+    },
+
+    placeHorizontalWords: function (instance, horizontalWords) {
+        let mOptions = $eXeCrucigrama.options[instance],
+            maxPlacedWords = [],
+            bestAttempt = 0;
+
+        for (let attempt = 0; attempt < 30; attempt++) {
+            let placedWords = [],
+                currentGrid = JSON.parse(JSON.stringify(mOptions.grid)),
+                rowsUsed = new Set();
+            horizontalWords.forEach((wordObj, index) => {
+                const position = $eXeCrucigrama.findHorizontalPosition(
+                    instance,
+                    wordObj.word,
+                    currentGrid,
+                    rowsUsed
+                );
+                if (position) {
+                    const numero = index + mOptions.half + 1;
+                    $eXeCrucigrama.placeWord(
+                        instance,
+                        wordObj.word,
+                        position.row,
+                        position.col,
+                        true,
+                        currentGrid,
+                        numero,
+                        index
+                    );
+                    placedWords.push(wordObj);
+                    rowsUsed.add(position.row);
+                }
+            });
+            if (placedWords.length > bestAttempt) {
+                bestAttempt = placedWords.length;
+                maxPlacedWords = placedWords;
+                mOptions.grid = currentGrid;
+            }
+            if (bestAttempt === horizontalWords.length) break;
+        }
+
+        if (bestAttempt < horizontalWords.length) {
+            const notPlaced = horizontalWords.filter(
+                (word) =>
+                    !maxPlacedWords.some((placed) => placed.word === word.word)
+            );
+
+            let additionalPlaced = [];
+
+            if (
+                notPlaced.length > 0 &&
+                $eXeCrucigrama.isFirstRowFree(instance, mOptions.grid)
+            ) {
+                const firstWord = notPlaced[0];
+                const row = 0;
+                const col = Math.floor(
+                    (mOptions.boardSize - firstWord.word.length) / 2
                 );
 
-            option.radiusLetter =
-                16 + Math.floor((27 - option.letters.length) / 3);
-            option.angleSize = (2 * Math.PI) / option.letters.length;
-
-            option.scorerp = 0;
-            option.idevicePath = $azquizgame.idevicePath;
-            option.main = 'roscoMainContainer-' + i;
-            option.idevice = 'rosco-IDevice';
-
-            $azquizgame.options.push(option);
-
-            const rosco = $azquizgame.createInterfaceRosco(i);
-            dl.before(rosco).remove();
-
-            const msg = $azquizgame.options[i].msgs.msgPlayStart;
-
-            $('#roscoGameMinimize-' + i).hide();
-            $('#roscoGameContainer-' + i).hide();
-            $('#roscoGame-' + i).hide();
-
-            $azquizgame.addEvents(i);
-
-            if ($azquizgame.options[i].showMinimize) {
-                $('#roscoGameMinimize-' + i)
-                    .css('cursor', 'pointer')
-                    .show();
-            } else {
-                $('#roscoGameContainer-' + i).show();
-                $('#roscoGame-' + i).show();
+                if (
+                    col >= 0 &&
+                    col + firstWord.word.length <= mOptions.boardSize
+                ) {
+                    const index = horizontalWords.indexOf(firstWord);
+                    const numero = index + mOptions.half + 1;
+                    $eXeCrucigrama.placeWord(
+                        instance,
+                        firstWord.word,
+                        row,
+                        col,
+                        true,
+                        mOptions.grid,
+                        numero,
+                        index
+                    );
+                    maxPlacedWords.push(firstWord);
+                    additionalPlaced.push(firstWord);
+                    mOptions.occupiedRows.add(row);
+                    mOptions.occupiedRows.add(row + 1);
+                }
             }
 
-            $('#roscoMessageMaximize-' + i).text(msg);
-            $('#roscoMainContainer-' + i)
-                .css('display', 'flex')
-                .show();
-        });
+            const stillNotPlaced = notPlaced.filter(
+                (word) => !additionalPlaced.includes(word)
+            );
 
-        let node = document.querySelector('.page-content');
-        if (this.isInExe) {
-            node = document.getElementById('node-content');
+            if (
+                stillNotPlaced.length > 0 &&
+                $eXeCrucigrama.isLastRowFree(instance, mOptions.grid)
+            ) {
+                const secondWord = stillNotPlaced[0];
+                const row = mOptions.boardSize - 1;
+                const col = Math.floor(
+                    (mOptions.boardSize - secondWord.word.length) / 2
+                );
+
+                if (
+                    col >= 0 &&
+                    col + secondWord.word.length <= mOptions.boardSize
+                ) {
+                    const index = horizontalWords.indexOf(secondWord);
+                    const numero = index + mOptions.half + 1;
+                    $eXeCrucigrama.placeWord(
+                        instance,
+                        secondWord.word,
+                        row,
+                        col,
+                        true,
+                        mOptions.grid,
+                        numero,
+                        index
+                    );
+                    maxPlacedWords.push(secondWord);
+                    additionalPlaced.push(secondWord);
+                    mOptions.occupiedRows.add(row);
+                    mOptions.occupiedRows.add(row - 1);
+                }
+            }
+
+            const stillNotPlaced2 = stillNotPlaced.filter(
+                (word) => !additionalPlaced.includes(word)
+            );
+
+            if (
+                stillNotPlaced2.length > 0 &&
+                $eXeCrucigrama.isFirstColumnFree(instance, mOptions.grid)
+            ) {
+                const thirdWord = stillNotPlaced2[0];
+                const col = 0;
+                const row = Math.floor(
+                    (mOptions.boardSize - thirdWord.word.length) / 2
+                );
+
+                if (
+                    row >= 0 &&
+                    row + thirdWord.word.length <= mOptions.boardSize
+                ) {
+                    const originalIndex = horizontalWords.indexOf(thirdWord);
+                    const wordindexInGame = mOptions.half + originalIndex;
+                    const numero = originalIndex + mOptions.half + 1;
+                    $eXeCrucigrama.placeWord(
+                        instance,
+                        thirdWord.word,
+                        row,
+                        col,
+                        false,
+                        mOptions.grid,
+                        numero,
+                        wordindexInGame
+                    );
+                    maxPlacedWords.push(thirdWord);
+                    additionalPlaced.push(thirdWord);
+                    mOptions.occupiedColumns.add(col);
+                    mOptions.occupiedColumns.add(col + 1);
+                }
+            }
+
+            const stillNotPlaced3 = stillNotPlaced2.filter(
+                (word) => !additionalPlaced.includes(word)
+            );
+
+            if (
+                stillNotPlaced3.length > 0 &&
+                $eXeCrucigrama.isLastColumnFree(instance, mOptions.grid)
+            ) {
+                const fourthWord = stillNotPlaced3[0];
+                const col = mOptions.boardSize - 1;
+                const row = Math.floor(
+                    (mOptions.boardSize - fourthWord.word.length) / 2
+                );
+
+                if (
+                    row >= 0 &&
+                    row + fourthWord.word.length <= mOptions.boardSize
+                ) {
+                    const originalIndex = horizontalWords.indexOf(fourthWord);
+                    const wordindexInGame = mOptions.half + originalIndex;
+                    const numero = originalIndex + mOptions.half + 1;
+                    $eXeCrucigrama.placeWord(
+                        instance,
+                        fourthWord.word,
+                        row,
+                        col,
+                        false,
+                        mOptions.grid,
+                        numero,
+                        wordindexInGame
+                    );
+                    maxPlacedWords.push(fourthWord);
+                    additionalPlaced.push(fourthWord);
+                    mOptions.occupiedColumns.add(col);
+                    mOptions.occupiedColumns.add(col - 1);
+                }
+            }
+
+            const finalNotPlaced = notPlaced.filter(
+                (word) => !additionalPlaced.includes(word)
+            );
+
+            if (finalNotPlaced.length > 0) {
+                console.log(
+                    'No se pudieron colocar todas las palabras horizontales.'
+                );
+                mOptions.wordsGame = mOptions.wordsGame.filter(
+                    (word) =>
+                        !finalNotPlaced.some((np) => np.word === word.word)
+                );
+
+                mOptions.numberQuestions = mOptions.wordsGame.length;
+                mOptions.half = Math.ceil(mOptions.numberQuestions / 2);
+            }
         }
-        if (node)
-            $exeDevices.iDevice.gamification.observers.observeResize(
-                $azquizgame,
-                node
-            );
 
-        $exeDevices.iDevice.gamification.math.updateLatex('.rosco-IDevice');
+        return maxPlacedWords;
     },
 
-    loadDataGame: function (data, imgsLink, audiosLink, version) {
-        let json = data.text();
-        version =
-            typeof version === 'undefined' || version === ''
-                ? 0
-                : parseInt(version, 10);
-        if (version > 0)
-            json = $exeDevices.iDevice.gamification.helpers.decrypt(json);
-        let mOptions =
-            $exeDevices.iDevice.gamification.helpers.isJsonString(json);
+    findHorizontalPosition: function (instance, word, grid, rowsUsed) {
+        let mOptions = $eXeCrucigrama.options[instance],
+            centerRow = Math.floor(mOptions.boardSize / 2),
+            startPositions = [centerRow];
 
-        mOptions.playerAudio = '';
-        mOptions.gameOver = false;
-        mOptions.modeBoard = mOptions.modeBoard ?? false;
-        mOptions.evaluation = mOptions.evaluation ?? false;
-        mOptions.evaluationID = mOptions.evaluationID ?? '';
-        mOptions.durationGame = mOptions.durationGame ?? 240;
+        for (let i = 1; i <= Math.floor(mOptions.boardSize / 2); i++) {
+            startPositions.push(centerRow - i);
+            startPositions.push(centerRow + i);
+        }
 
-        imgsLink.each(function (index) {
-            const url = $(this).attr('href');
-            mOptions.wordsGame[index].url = url && url.length >= 4 ? url : '';
-        });
-
-        audiosLink.each(function (index) {
-            const audio = $(this).attr('href');
-            mOptions.wordsGame[index].audio =
-                audio && audio.length >= 4 ? audio : '';
-        });
-
-        mOptions.wordsGame.forEach((wordGame) => {
-            if (version < 2) {
-                wordGame.audio = wordGame.audio ?? '';
+        for (let row of startPositions) {
+            if (
+                rowsUsed.has(row) ||
+                rowsUsed.has(row - 1) ||
+                rowsUsed.has(row + 1)
+            )
+                continue;
+            let centerCol = Math.floor((mOptions.boardSize - word.length) / 2);
+            if (
+                $eXeCrucigrama.canPlaceWord(
+                    instance,
+                    word,
+                    row,
+                    centerCol,
+                    true,
+                    grid
+                )
+            ) {
+                return { row: row, col: centerCol };
             }
-            wordGame.url = $exeDevices.iDevice.gamification.media.extractURLGD(
-                wordGame.url
-            );
-        });
-
-        return mOptions;
+            for (let offset = 1; offset < mOptions.boardSize; offset++) {
+                let leftCol = centerCol - offset,
+                    rightCol = centerCol + offset;
+                if (
+                    leftCol >= 0 &&
+                    $eXeCrucigrama.canPlaceWord(
+                        instance,
+                        word,
+                        row,
+                        leftCol,
+                        true,
+                        grid
+                    )
+                ) {
+                    return { row: row, col: leftCol };
+                }
+                if (
+                    rightCol + word.length <= mOptions.boardSize &&
+                    $eXeCrucigrama.canPlaceWord(
+                        instance,
+                        word,
+                        row,
+                        rightCol,
+                        true,
+                        grid
+                    )
+                ) {
+                    return { row: row, col: rightCol };
+                }
+            }
+        }
+        return null;
     },
 
-    createInterfaceRosco: function (instance) {
-        const aLetters = this.getLettersRosco(instance),
-            mOptions = this.options[instance],
-            sTime = $exeDevices.iDevice.gamification.helpers.getTimeToString(
-                mOptions.durationGame
-            ),
-            msgs = mOptions.msgs,
-            path = $azquizgame.idevicePath,
+    shuffleArray: function (array) {
+        for (let i = array.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [array[i], array[j]] = [array[j], array[i]];
+        }
+        return array;
+    },
+
+    verifyCrossword: function (instance) {
+        let mOptions = $eXeCrucigrama.options[instance],
+            hits = 0,
+            totalWords = mOptions.wordsGame.length;
+
+        const $crossword = $('#ccgmCrossword-' + instance);
+
+        $('#ccgmCheck-' + instance).hide();
+        $('#ccgmReboot-' + instance).show();
+        $('#ccgmSolutions-' + instance).hide();
+
+        if (mOptions.showSolution) $('#ccgmSolutions-' + instance).show();
+
+        if (mOptions.modeGame) {
+            $eXeCrucigrama.updateInputs(instance, -1);
+        } else {
+            $eXeCrucigrama.completeCrosswordFromInputs(instance);
+        }
+
+        $crossword.find('.CCGMP-Cell input').css('background-color', 'white');
+
+        const stripDiacritics = function (s) {
+            return (s || '')
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '')
+                .normalize('NFC');
+        };
+
+        mOptions.mappedWords.forEach((word) => {
+            let isOK = true;
+            word.forEach(({ row, col }) => {
+                let letterCorrecta = mOptions.grid[row][col].letter,
+                    $input = $crossword.find(
+                        `input[data-row='${row}'][data-col='${col}']`
+                    ),
+                    letterIngresada = $input.val();
+
+                if (!mOptions.caseSensitive) {
+                    letterCorrecta = (letterCorrecta || '').toLowerCase();
+                    letterIngresada = (letterIngresada || '').toLowerCase();
+                }
+
+                if (mOptions.tilde === false) {
+                    letterCorrecta = stripDiacritics(letterCorrecta);
+                    letterIngresada = stripDiacritics(letterIngresada);
+                }
+
+                if (letterCorrecta !== letterIngresada) {
+                    isOK = false;
+                }
+            });
+
+            word.forEach(({ row, col }, index) => {
+                const $input = $crossword.find(
+                    `input[data-row='${row}'][data-col='${col}']`
+                );
+                let isHorizontal = parseInt($input.data('hi')) != -1,
+                    isVertical = parseInt($input.data('vi')) != -1,
+                    bcolor = '1px solid #333',
+                    borderStyles = {};
+                if (isOK) {
+                    $input.css({
+                        'background-color': $eXeCrucigrama.borderColors.green,
+                        color: '#fff',
+                    });
+                }
+                if (isHorizontal) {
+                    borderStyles['border-top'] = bcolor;
+                    borderStyles['border-bottom'] = bcolor;
+                    if (index === 0) {
+                        borderStyles['border-left'] = bcolor;
+                    }
+                    if (index === word.length - 1) {
+                        borderStyles['border-right'] = bcolor;
+                    }
+                }
+                if (isVertical) {
+                    borderStyles['border-left'] = bcolor;
+                    borderStyles['border-right'] = bcolor;
+                    if (index === 0) {
+                        borderStyles['border-top'] = bcolor;
+                    }
+                    if (index === word.length - 1) {
+                        borderStyles['border-bottom'] = bcolor;
+                    }
+                }
+                $input.css(borderStyles);
+                $input.prop('readonly', true);
+            });
+            if (isOK) {
+                hits++;
+            }
+        });
+
+        mOptions.hits = hits;
+        let score = (hits * 10) / totalWords,
+            message = mOptions.msgs.msgGameOver
+                .replace('%s', score.toFixed(2))
+                .replace('%s', hits)
+                .replace('%s', totalWords),
+            type = score < 5 ? 1 : 2;
+        $('#ccgmMainContainer-' + instance)
+            .find('li.CCGMP-FlexSpan')
+            .each(function () {
+                let $answer = $(this).find('.CCGMP-InputWordDef').eq(0),
+                    $correct = $(this).find('.CCGMP-WordDef').eq(0),
+                    inputValue = ($answer.val() || '').trim(),
+                    correctWord = ($correct.text() || '').trim();
+
+                if (!mOptions.caseSensitive) {
+                    inputValue = inputValue.toLowerCase();
+                    correctWord = correctWord.toLowerCase();
+                }
+                if (mOptions.tilde === false) {
+                    inputValue = stripDiacritics(inputValue);
+                    correctWord = stripDiacritics(correctWord);
+                }
+                backcolor =
+                    inputValue === correctWord
+                        ? $eXeCrucigrama.borderColors.green
+                        : $eXeCrucigrama.borderColors.red;
+                $answer.css({
+                    color: backcolor,
+                });
+                $answer.prop('readonly', true);
+            });
+        $eXeCrucigrama.showMessage(type, message, instance);
+        $eXeCrucigrama.gameOver(instance);
+    },
+
+    getDetailMedia: function (instance) {
+        const msgs = $eXeCrucigrama.options[instance].msgs,
+            path = $eXeCrucigrama.idevicePath,
             html = `
-            <div class="rosco-IdeviceForm">
-                <div class="rosco-Main" id="roscoMain-${instance}">
-                    <div class="rosco-MainContainer" id="roscoMainContainer-${instance}">
-             
-                    <div class="rosco-GameMinimize" id="roscoGameMinimize-${instance}">
-                            <a href="#" class="rosco-LinkMaximize" id="roscoLinkMaximize-${instance}" title="${msgs.msgMaximize}">
-                                <img src="${path}rosco-icon.png" class="rosco-IconMinimize" id="roscoIcon-${instance}" alt="">
-                                <div class="rosco-MessageMaximize" id="roscoMessageMaximize-${instance}">${msgs.msgPlayStart}</div>
-                            </a>
-                        </div>
-                        <div class="rosco-GameContainer" id="roscoGameContainer-${instance}">
-                            <div class="rosco-GameScoreBoard">
-                                <div class="rosco-GameScores">
-                                    <strong class="sr-av">${msgs.msgHits}:</strong>
-                                    <div class="exeQuextIcons exeQuextIcons-Hit" title="${msgs.msgHits}"></div>
-                                    <p id="roscotPHits-${instance}">0</p>
-                                    <strong class="sr-av">${msgs.msgErrors}:</strong>
-                                    <div class="exeQuextIcons exeQuextIcons-Error" title="${msgs.msgErrors}"></div>
-                                    <p id="roscotPErrors-${instance}">0</p>
-                                </div>
-                                <div class="rosco-TimeNumber">
-                                    <strong class="sr-av">${msgs.msgTime}:</strong>
-                                    <div class="exeQuextIcons exeQuextIcons-Time" title="${msgs.msgTime}"></div>
-                                    <p class="rosco-PTime" id="roscoPTime-${instance}">${sTime}</p>
-                                    <div class="exeQuextIcons exeQuextIcons-OneRound" id="roscoNumberRounds-${instance}" title="${msgs.msgOneRound}"></div>
-                                    <strong class="sr-av" id="roscoNumberRoundsSpan-${instance}">${msgs.msgOneRound}:</strong>
-                                    <a href="#" class="rosco-LinkTypeGame" id="roscoLinkTypeGame-${instance}" title="${msgs.msgHideRoulette}">
-                                        <strong class="sr-av">${msgs.msgHideRoulette}:</strong>
-                                        <div class="exeQuextIcons exeQuextIcons-RoscoRows" id="roscoTypeGame-${instance}"></div>
-                                    </a>
-                                    <a href="#" class="rosco-LinkArrowMinimize" id="roscoLinkArrowMinimize-${instance}" title="${msgs.msgMinimize}">
-                                        <strong class="sr-av">${msgs.msgMinimize}:</strong>
-                                        <div class="exeQuextIcons exeQuextIcons-Minimize"></div>
-                                    </a>
-                                    <a href="#" class="rosco-LinkFullScreen" id="roscoLinkFullScreen-${instance}" title="${msgs.msgFullScreen}">
-                                        <strong class="sr-av">${msgs.msgFullScreen}:</strong>
-                                        <div class="exeQuextIcons exeQuextIcons-FullScreen" id="roscoFullScreen-${instance}"></div>
-                                    </a>
-                                </div>
-                            </div>
-                            <div class="rosco-Letters" id="roscoLetters-${instance}">${aLetters}</div>
-                            <div class="rosco-ShowClue" id="roscoShowClue-${instance}">
-                                <div class="sr-av">${msgs.msgClue}:</div>
-                                <p class="rosco-PShowClue rosco-parpadea" id="roscoPShowClue-${instance}"></p>
-                            </div>
-                            <div class="rosco-MultimediaNeo" id="roscoMultimedia-${instance}">
-                                <div class="rosco-Protector" id="roscoProtector-${instance}"></div>
-                                <img src="${path}exequextcursor.gif" class="rosco-Cursor" alt="" id="roscoCursor-${instance}"/> 
-                                <img src="" class="rosco-ImageNeo" alt="${msgs.msgNoImage}" id="roscoImage-${instance}"/> 
-                                <img src="${path}roscoHome.png" class="rosco-NoImage" alt="${msgs.msgNoImage}" id="roscoNoImage-${instance}"/> 
-                                <a href="#" class="rosco-LinkAudio" id="roscoLinkAudio-${instance}" title="${msgs.msgAudio}"><img src="${path}exequextaudio.svg" alt="${msgs.msgAudio}"></a>
-                                <a href="#" class="rosco-FullLinkImage" id="roscoFullLinkImage-${instance}" title="${mOptions.msgs.msgFullScreen}">
-                                    <strong><span class="sr-av">${mOptions.msgs.msgFullScreen}:</span></strong>
-                                    <div  class="exeQuextIcons exeQuextIcons-FullImage rosco-Activo"></div>
-                                </a>
-                            </div>
-                            <div class="rosco-AuthorLicence" id="roscoAutorLicence-${instance}">
-                                <div class="sr-av">${msgs.msgAuthor}:</div>
-                                <p id="roscoAuthor-${instance}"></p>
-                            </div>
-                            <div class="rosco-Messages" id="roscoMessages-${instance}">
-                                <p id="roscoPMessages-${instance}">${msgs.msgReady}</p>
-                            </div>
-                            <div class="sr-av" id="roscoStartGameSRAV-${instance}">${msgs.msgPlayStart}:</div>
-                            <div class="rosco-StartGame"><a href="#" id="roscoStartGame-${instance}"></a></div>
-                            <div class="rosco-StartGame"><a href="#" id="roscoShowWords-${instance}" style="display:none">${msgs.msgShowWords}</a></div>
-                            <div class="rosco-QuestionDiv" id="roscoQuestionDiv-${instance}">
-                                <div class="rosco-TypeDefinition" id="roscoTypeDefinition-${instance}">
-                                    <p id="roscoPStartWith-${instance}">${msgs.msgStartWith}</p>
-                                </div>
-                                <div class="rosco-Definition" id="roscoDefinition-${instance}">
-                                    <h3 class="sr-av">${msgs.msgQuestion}:</h3>
-                                    <p id="roscoPDefinition-${instance}"></p>
-                                </div>
-                                <div class="rosco-DivReply" id="roscoDivReply-${instance}">
-                                    <a href="#" id="roscoBtnMoveOn-${instance}" title="${msgs.msgMoveOne}">
-                                        <strong class="sr-av">${msgs.msgMoveOne}</strong>
-                                        <div class="exeQuextIcons-MoveOne"></div>
-                                    </a>
-                                    <label for="roscoEdReply-${instance}" class="sr-av">${msgs.msgReply}</label>
-                                    <input type="text" value="" class="rosco-EdReply form-control" id="roscoEdReply-${instance}" autocomplete="off">
-                                    <a href="#" id="roscoBtnReply-${instance}" title="${msgs.msgReply}">
-                                        <strong class="sr-av">${msgs.msgReply}</strong>
-                                        <div class="exeQuextIcons-Submit"></div>
-                                    </a>
-                                </div>
-                            </div>
-                            <div class="rosco-DivModeBoard" id="roscoDivModeBoard-${instance}">
-                                <a href="#" class="rosco-ModeBoard" id="roscoModeBoardOK-${instance}" title="">${msgs.msgCorrect}</a>
-                                <a href="#" class="rosco-ModeBoard" id="roscoModeBoardMoveOn-${instance}" title="">${msgs.msgMoveOne}</a>
-                                <a href="#" class="rosco-ModeBoard" id="roscoModeBoardKO-${instance}" title="">${msgs.msgIncorrect}</a>
-                            </div>
-                            <div class="rosco-DivInstructions" id="roscoDivInstructions-${instance}">${msgs.msgWrote}</div>
-                        </div>
-                        <div id="roscoGame-${instance}" class="rosco-Game">
-                            <canvas class="rosco-Canvas" id="roscoCanvas-${instance}" width="360px" height="360px">
-                                Your browser does not support the HTML5 canvas tag
-                            </canvas>
-                        </div>
-                        <div class="rosco-Cubierta" id="roscoCubierta-${instance}" style="display:none">
-                            <div class="rosco-CodeAccessDiv" id="roscoCodeAccessDiv-${instance}">
-                                <div class="rosco-MessageCodeAccessE" id="roscoMesajeAccesCodeE-${instance}"></div>
-                                <div class="rosco-DataCodeAccessE">
-                                    <label for="roscoEdCodeAccess-${instance}" class="sr-av">${msgs.msgCodeAccess}:</label>
-                                    <input type="text" class="rosco-CodeAccessE form-control" id="roscoEdCodeAccess-${instance}" placeholder="${msgs.msgCodeAccess}">
-                                    <a href="#" id="roscoCodeAccessButton-${instance}" title="${msgs.msgReply}">
-                                    <strong class="sr-av">${msgs.msgReply}</strong>
-                                    <div class="exeQuextIcons-Submit"></div>
-                                    </a>
-                                </div>
-                            </div>
-                            <div class="rosco-ShowWordsDiv" id="roscoShowWordsDiv-${instance}">
-                                <div class="rosco-ShowAnswerDiv">
-                                    <a href="#" id="roscoShowAll-${instance}">${msgs.msgAll}</a>
-                                    <a href="#" id="roscoShowHits-${instance}">${msgs.msgHits}</a>
-                                    <a href="#" id="roscoShowErrors-${instance}">${msgs.msgErrors}</a>
-                                    <a href="#" id="roscoShowUnanswered-${instance}">${msgs.msgUnanswered}</a>
-                                </div>
-                                <div class="rosco-Words" id="roscoWords-${instance}"></div>
-                                <a href="#" class="rosco-WordsClose" id="roscoWordsClose-${instance}" title=""><strong>${msgs.msgClose}</strong></a>
-                            </div>
-                        </div>
-                    </div>
+            <div class="CCGMP-Detail" id="ccgmDetails-${instance}">
+                <div class="CCGMP-FlexDetail">
+                    <a href="#" class="CCGMP-LinkPSound" id="ccgmLinkSound-${instance}" title="Play">
+                        <strong class="sr-av">Play:</strong>
+                        <div class="CCGMP-IconsToolBar exeQuextIcons-Audio  CCGMP-Activo"></div>
+                    </a>
+                    <div></div>
+                    <a href="#" class="CCGMP-LinkClose" id="ccgmLinkClose-${instance}" title="${msgs.msgClose}">
+                        <strong class="sr-av">${msgs.msgClose}:</strong>
+                        <div class="CCGMP-IconsToolBar exeQuextIcons-Close CCGMP-Activo"></div>
+                    </a>
                 </div>
-                ${$exeDevices.iDevice.gamification.scorm.addButtonScoreNew(mOptions, this.isInExe)}
+                <div class="CCGMP-MultimediaPoint" id="ccgmMultimediaPoint-${instance}">
+                    <img class="CCGMP-Images" id="ccgmImagePoint-${instance}" alt="${msgs.msgNoImage}" />
+                    <img class="CCGMP-Cursor" id="ccgmCursor-${instance}" src="${path}exequextcursor.gif" alt="" />
+                     <a href="#" class="CCGMP-FullLinkImage" id="ccgmFullLinkImage-${instance}" title="${msgs.msgFullScreen}">
+                        <strong><span class="sr-av">${msgs.msgFullScreen}:</span></strong>
+                        <div  class="exeQuextIcons exeQuextIcons-FullImage CCGMP-Activo"></div>
+                    </a>
+                </div>
+                <div class="CCGMP-AuthorPoint" id="ccgmAuthorPoint-${instance}"></div>
+                <div class="CCGMP-Footer" id="ccgmFooterPoint-${instance}"></div>
             </div>
         `;
         return html;
     },
 
-    showCubiertaOptions: function (mode, instance) {
-        if (mode === false) $('#roscoCubierta-' + instance).fadeOut();
-        else $('#roscoCubierta-' + instance).fadeIn();
+    showPoint: function (instance, num) {
+        const mOptions = $eXeCrucigrama.options[instance],
+            q = mOptions.wordsGame[num];
+
+        $('#ccgmDetails-' + instance).show();
+        $('#ccgmAuthorPoint-' + instance).html(q.author);
+        $('#ccgmFooterPoint-' + instance).html(q.definition);
+
+        if (q.definition.length > 0) {
+            $('#ccgmFooterPoint-' + instance).show();
+        }
+
+        $eXeCrucigrama.showImagePoint(
+            instance,
+            q.url,
+            q.x,
+            q.y,
+            q.author,
+            q.alt
+        );
+
+        if (q.author.length > 0) {
+            $('#ccgmMAuthorPoint-' + instance).show();
+        }
+
+        const html = $('#ccgmDetails-' + instance).html(),
+            latex = $exeDevices.iDevice.gamification.math.hasLatex(html);
+        if (latex) {
+            $exeDevices.iDevice.gamification.math.updateLatex('#ccgmDetails-' + instance);
+        }
     },
 
-    renderWords: function (instance, type, mode) {
-        const mOptions = $azquizgame.options[instance],
-            words = mOptions.wordsGame;
+    showImagePoint: function (instance, url, x, y, author, alt) {
+        const $Image = $('#ccgmImagePoint-' + instance),
+            $cursor = $('#ccgmCursor-' + instance),
+            $Author = $('#ccgmAuthorPoint-' + instance);
 
-        if (!type) {
-            $('#roscoCubierta-' + instance).slideUp();
-            $('#roscoShowWordsDiv-' + instance).slideUp();
-            $('#roscoShowWords-' + instance).show();
+        $Author.html(author || '');
+        $Image
+            .prop('src', url)
+            .on('load', function () {
+                if (
+                    !this.complete ||
+                    typeof this.naturalWidth == 'undefined' ||
+                    this.naturalWidth == 0
+                ) {
+                    $Image.hide();
+                    $Image.attr(
+                        'alt',
+                        $eXeCrucigrama.options[instance].msgs.msgNoImage
+                    );
+                    $noImage.show();
+                    $eXeCrucigrama.showCubiertaOptions(instance, 2);
+                    return false;
+                } else {
+                    $Image.show();
+                    $Image.attr('alt', alt || '');
+                    $eXeCrucigrama.showCubiertaOptions(instance, 2);
+                    $eXeCrucigrama.positionPointerCard($cursor, x, y);
+                    return true;
+                }
+            })
+            .on('error', function () {
+                $Image.hide();
+                $Image.attr(
+                    'alt',
+                    $eXeCrucigrama.options[instance].msgs.msgNoImage
+                );
+                $eXeCrucigrama.showCubiertaOptions(instance, 2);
+                return false;
+            });
+
+        $('#ccgmMultimediaPoint-' + instance).show();
+    },
+
+    positionPointerCard: function ($cursor, x, y) {
+        $cursor.hide();
+
+        if (x > 0 || y > 0) {
+            const parentClass = '.CCGMP-MultimediaPoint',
+                siblingClass = '.CCGMP-Images',
+                containerElement = $cursor.closest(parentClass).eq(0),
+                imgElement = $cursor.siblings(siblingClass).eq(0),
+                containerPos = containerElement.offset(),
+                imgPos = imgElement.offset(),
+                marginTop = imgPos.top - containerPos.top,
+                marginLeft = imgPos.left - containerPos.left,
+                mx = marginLeft + x * imgElement.width(),
+                my = marginTop + y * imgElement.height();
+
+            $cursor.css({ left: mx, top: my, 'z-index': 1000 });
+            $cursor.show();
+        }
+    },
+
+    showCubiertaOptions(instance, mode) {
+        const $details = $('#ccgmDetails-' + instance),
+            $cubierta = $('#ccgmCubierta-' + instance),
+            $access = $('#ccgmCodeAccessDiv-' + instance),
+            $feeeback = $('#ccgmDivFeedBack-' + instance);
+
+        if (mode === false) {
+            $cubierta.fadeOut(400, function () {
+                $access.hide();
+                $feeeback.hide();
+                $details.hide();
+            });
             return;
         }
 
-        const $links = $('#roscoCubierta-' + instance)
-            .find('.rosco-ShowAnswerDiv')
-            .find('a');
-        $links.removeClass('rosco-ModeShow');
-        $links.eq(mode).addClass('rosco-ModeShow');
+        $access.hide();
+        $feeeback.hide();
+        $details.hide();
+        $cubierta.hide();
 
-        const $wordsDiv = $('#roscoWords-' + instance);
-        $wordsDiv.empty();
+        switch (mode) {
+            case 0:
+                $access.show();
+                $cubierta.show();
+                break;
+            case 1:
+                $feeeback.find('.crucigrama-feedback-game').show();
+                $feeeback.fadeIn();
+                $cubierta.show();
+                break;
+            case 2:
+                $details.fadeIn();
+                $cubierta.show();
+                break;
+            default:
+                break;
+        }
+    },
 
-        let j = 0;
+    repeatActivity: function (instance) {
+        const mOptions = $eXeCrucigrama.options[instance];
 
-        $.each(words, function (index, wordObj) {
-            if (wordObj.word && wordObj.word.trim().length > 0) {
-                if (mode == 1 && wordObj.correct != 1) return;
-                if (mode == 2 && wordObj.correct != 2) return;
-                if (mode == 3 && wordObj.correct != 0) return;
+        mOptions.wordsGame =
+            $exeDevices.iDevice.gamification.helpers.shuffleAds(
+                mOptions.wordsGame
+            );
+        mOptions.previousValues = [];
 
-                let className = 'rosco-unanswered';
-                if (wordObj.correct == 1) className = 'rosco-correct';
-                else if (wordObj.correct == 2) className = 'rosco-incorrect';
+        for (let i = 0; i < mOptions.wordsGame.length; i++) {
+            let pv = mOptions.wordsGame[i].word.replace(/./g, '_');
+            mOptions.previousValues.push(pv);
+        }
 
-                let typeText =
-                    wordObj.type === 0
-                        ? mOptions.msgs.msgStartWith
-                        : mOptions.msgs.msgContaint;
-                typeText = typeText.replace('%1', wordObj.letter);
+        this.cleanupInstance(instance);
 
-                const bgColorClass =
-                    j % 2 === 0 ? 'rosco-bg-gray-1' : 'rosco-bg-gray-2';
-                let paragraph = `<p class="${className} ${bgColorClass}"><span>${typeText}. ${wordObj.word}</span>: ${wordObj.definition}`;
+        $eXeCrucigrama.generateCrossword(instance);
+        $eXeCrucigrama.startGame(instance);
 
-                if (wordObj.audio) {
-                    paragraph += `<img src="${$azquizgame.idevicePath}exequextaudio.svg" class="rosco-audioicon" data-audio="${wordObj.audio}" alt="${mOptions.msgs.msgAudio}" />`;
+        if (mOptions.modeGame) {
+            $eXeCrucigrama.modeCrossword(instance);
+        } else {
+            $eXeCrucigrama.modeDefinitions(instance);
+        }
+    },
+
+    createDefinitionsList: function (instance) {
+        const mOptions = $eXeCrucigrama.options[instance],
+            $definitionsVList = $('#ccgmDefinitionsVList-' + instance),
+            $definitionsHList = $('#ccgmDefinitionsHList-' + instance);
+
+        $definitionsHList.empty();
+        $definitionsVList.empty();
+        mOptions.wordsGame.forEach((item, index) => {
+            let def = $eXeCrucigrama.createDefinition(item, index, instance);
+            const $li1 = $(
+                '<li class="CCGMP-FlexSpan" data-number="' + index + '">'
+            ).html(def);
+            if (index < mOptions.half) {
+                $definitionsVList.append($li1);
+            } else {
+                $definitionsHList.append($li1);
+            }
+        });
+    },
+
+    createDefinition(item, wordindex, instance) {
+        let mOptions = $eXeCrucigrama.options[instance],
+            $crossword = $('#ccgmCrossword-' + instance);
+
+        wordindex = parseInt(wordindex);
+        const isVertical = wordindex < mOptions.half;
+
+        let wordWithUnderscores = item.word
+            .split('')
+            .map((char, index) => {
+                // Search by data-vi for vertical words, data-hi for horizontal words
+                let $input;
+                if (isVertical) {
+                    $input = $crossword.find(
+                        `input[data-vi="${wordindex}"][data-lvi="${index}"]`
+                    );
+                } else {
+                    $input = $crossword.find(
+                        `input[data-hi="${wordindex}"][data-lhi="${index}"]`
+                    );
+                }
+                return $input.length > 0 && $input.val() ? $input.val() : '_';
+            })
+            .join('');
+
+        const input = `<span class="CCGMP-InputDefDiv"><label class="sr-av">${mOptions.msgs.msgSolutionWord}:</label> 
+               <input data-number="${wordindex}" type="text" class="CCGMP-InputWordDef" 
+               value="${wordWithUnderscores}"  /></span>`;
+        const word = `<span  class="CCGMP-WordDef">${item.word}</span>`;
+
+        const image =
+            item.url.length > 3
+                ? `<a href="#" data-number="${wordindex}"  class="CCGMP-LinkImageDef" title="Imagen">
+                  <div class="CCGMP-Icons CCGMP-IconImage CCGMP-Activo"></div>
+               </a>`
+                : '';
+
+        const sound =
+            item.audio && item.audio.length > 3
+                ? `<a href="#" data-number="${wordindex}" class="CCGMP-LinkSoundDef" title="Audio">
+                  <div class="CCGMP-Icons CCGMP-IconAudio CCGMP-Activo"></div>
+               </a>`
+                : '';
+
+        const definition =
+            item.definition.length > 0 ? `<span>${item.definition}</span>` : '';
+
+        const sdefinition = `<span>${wordindex + 1}.- </span>${input}${word}:${image}${sound}${definition}`;
+        return sdefinition;
+    },
+
+    showSolutions: function (instance) {
+        const mOptions = $eXeCrucigrama.options[instance],
+            $crossword = $('#ccgmCrossword-' + instance);
+
+        for (let row = 0; row < mOptions.boardSize; row++) {
+            for (let col = 0; col < mOptions.boardSize; col++) {
+                const casilla = mOptions.grid[row][col];
+                if (casilla && casilla.letter) {
+                    const $input = $crossword.find(
+                        `input[data-row='${row}'][data-col='${col}']`
+                    );
+                    $input.val(casilla.letter);
+                    $input.prop('readonly', true);
+                }
+            }
+        }
+
+        $('#ccgmMainContainer-' + instance)
+            .find('li.CCGMP-FlexSpan')
+            .each(function () {
+                $(this).find('.CCGMP-WordDef').eq(0).show();
+            });
+
+        $crossword.find('.CCGMP-InputDefDiv').show();
+        mOptions.solutionsShow = true;
+    },
+
+    canPlaceWord: function (instance, word, row, col, horizontal, grid) {
+        const mOptions = $eXeCrucigrama.options[instance];
+
+        if (horizontal) {
+            if (col + word.length > mOptions.boardSize) {
+                return false;
+            }
+
+            if (
+                mOptions.occupiedRows.has(row) ||
+                mOptions.occupiedRows.has(row - 1) ||
+                mOptions.occupiedRows.has(row + 1)
+            ) {
+                return false;
+            }
+
+            if (!grid[row]) {
+                return false;
+            }
+
+            if (grid[row][col] && typeof grid[row][col].vi !== 'undefined') {
+                return false;
+            }
+
+            for (let i = 0; i < word.length; i++) {
+                if (!grid[row]) {
+                    return false;
                 }
 
-                paragraph += '</p>';
-                $wordsDiv.append(paragraph);
-                j++;
+                const cell = grid[row][col + i];
+
+                if (typeof cell === 'undefined' || cell === null) {
+                    continue;
+                }
+
+                if (cell.letter && cell.letter !== word[i]) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    },
+
+    isFirstRowFree: function (instance, grid) {
+        const mOptions = $eXeCrucigrama.options[instance];
+        const row = 0;
+
+        if (!grid[row]) {
+            return true;
+        }
+
+        for (let col = 0; col < mOptions.boardSize; col++) {
+            if (
+                grid[row][col] !== null &&
+                typeof grid[row][col] !== 'undefined'
+            ) {
+                return false;
+            }
+        }
+
+        return true;
+    },
+
+    isLastRowFree: function (instance, grid) {
+        const mOptions = $eXeCrucigrama.options[instance];
+        const row = mOptions.boardSize - 1;
+
+        if (!grid[row]) {
+            return true;
+        }
+
+        for (let col = 0; col < mOptions.boardSize; col++) {
+            if (
+                grid[row][col] !== null &&
+                typeof grid[row][col] !== 'undefined'
+            ) {
+                return false;
+            }
+        }
+
+        return true;
+    },
+
+    isFirstColumnFree: function (instance, grid) {
+        const mOptions = $eXeCrucigrama.options[instance];
+        const col = 0;
+
+        for (let row = 0; row < mOptions.boardSize; row++) {
+            if (
+                grid[row] &&
+                grid[row][col] !== null &&
+                typeof grid[row][col] !== 'undefined'
+            ) {
+                return false;
+            }
+        }
+
+        return true;
+    },
+
+    isLastColumnFree: function (instance, grid) {
+        const mOptions = $eXeCrucigrama.options[instance];
+        const col = mOptions.boardSize - 1;
+
+        for (let row = 0; row < mOptions.boardSize; row++) {
+            if (
+                grid[row] &&
+                grid[row][col] !== null &&
+                typeof grid[row][col] !== 'undefined'
+            ) {
+                return false;
+            }
+        }
+
+        return true;
+    },
+
+    enable: function () {
+        $eXeCrucigrama.loadGame();
+    },
+
+    loadGame: function () {
+        $eXeCrucigrama.options = [];
+
+        $eXeCrucigrama.activities.each(function (i) {
+            const dl = $('.crucigrama-DataGame', this);
+            if (dl.length === 0) return; // Skip already initialized activities
+            let version = $('.crucigrama-version', this).eq(0).text(),
+                imagesLink = $('.crucigrama-LinkImages', this),
+                audioLink = $('.crucigrama-LinkAudios', this),
+                $imageBack = $('.crucigrama-LinkBack', this),
+                mOption = $eXeCrucigrama.loadDataGame(
+                    dl,
+                    imagesLink,
+                    audioLink,
+                    version
+                ),
+                msg = mOption.msgs.msgPlayStart;
+
+            mOption.scorerp = 0;
+            mOption.idevicePath = $eXeCrucigrama.idevicePath;
+            mOption.main = 'ccgmMainContainer-' + i;
+            mOption.idevice = 'crucigrama-IDevice';
+
+            if ($imageBack.length == 1) {
+                mOption.urlBack = $imageBack.attr('href') || '';
+            }
+
+            $eXeCrucigrama.options.push(mOption);
+
+            const ccgm = $eXeCrucigrama.createInterfaceCrucigrama(i);
+
+            dl.before(ccgm).remove();
+
+            $('#ccgmGameMinimize-' + i).hide();
+            $('#ccgmGameContainer-' + i).hide();
+
+            if (mOption.showMinimize) {
+                $('#ccgmGameMinimize-' + i)
+                    .css({
+                        cursor: 'pointer',
+                    })
+                    .show();
+            } else {
+                $('#ccgmGameContainer-' + i).show();
+            }
+
+            $('#ccgmMessageMaximize-' + i).text(msg);
+            $('#ccgmDivFeedBack-' + i).prepend(
+                $('.crucigrama-feedback-game', this)
+            );
+            $('#ccgmDivFeedBack-' + i).hide();
+
+            mOption.previousValues = [];
+
+            for (let i = 0; i < mOption.wordsGame.length; i++) {
+                let pv = mOption.wordsGame[i].word.replace(/./g, '_');
+                mOption.previousValues.push(pv);
+            }
+
+            $eXeCrucigrama.generateCrossword(i);
+            $eXeCrucigrama.addEvents(i);
+        });
+
+        $exeDevices.iDevice.gamification.math.updateLatex(
+            '.crucigrama-IDevice'
+        );
+    },
+
+    loadDataGame: function (data, imgsLink, audioLink, version) {
+        let json = data.text();
+        version =
+            typeof version == 'undefined' || version == ''
+                ? 0
+                : parseInt(version);
+
+        if (version > 0)
+            json = $exeDevices.iDevice.gamification.helpers.decrypt(json);
+
+        const mOptions =
+            $exeDevices.iDevice.gamification.helpers.isJsonString(json);
+
+        mOptions.boardSize = 16;
+        mOptions.mappedWords = [];
+        mOptions.occupiedRows = new Set();
+        mOptions.occupiedColumns = new Set();
+        mOptions.grid = null;
+        mOptions.hits = 0;
+        mOptions.score = 0;
+        mOptions.modeGame = true;
+        mOptions.focused = 0;
+        mOptions.activeQuestion = -1;
+        mOptions.gameStarted = false;
+        mOptions.solutionsShow = false;
+        mOptions.percentajeQuestions =
+            typeof mOptions.percentajeQuestions != 'undefined'
+                ? mOptions.percentajeQuestions
+                : 100;
+        mOptions.tilde =
+            typeof mOptions.tilde != 'undefined' ? mOptions.tilde : true;
+
+        mOptions.evaluation =
+            typeof mOptions.evaluation == 'undefined'
+                ? false
+                : mOptions.evaluation;
+        mOptions.evaluationID =
+            typeof mOptions.evaluationID == 'undefined'
+                ? ''
+                : mOptions.evaluationID;
+        mOptions.id = typeof mOptions.id == 'undefined' ? false : mOptions.id;
+
+        for (let i = 0; i < mOptions.wordsGame.length; i++) {
+            let p = mOptions.wordsGame[i];
+            p.url = $exeDevices.iDevice.gamification.media.extractURLGD(p.url);
+        }
+
+        mOptions.playerAudio = '';
+        mOptions.gameOver = false;
+
+        imgsLink.each(function () {
+            let iq = parseInt($(this).text());
+            if (!isNaN(iq) && iq < mOptions.wordsGame.length) {
+                mOptions.wordsGame[iq].url = $(this).attr('href');
+                if (
+                    mOptions.wordsGame[iq].url.length < 4 &&
+                    mOptions.wordsGame[iq].type == 1
+                ) {
+                    mOptions.wordsGame[iq].url = '';
+                }
             }
         });
 
-        $('#roscoShowWords-' + instance).hide();
-        $('#roscoCodeAccessDiv-' + instance).hide();
-        $('#roscoCubierta-' + instance).show();
-        $('#roscoShowWordsDiv-' + instance).slideDown();
-    },
-
-    getLettersRosco: function (instance) {
-        const mOptions = $azquizgame.options[instance],
-            letras = mOptions.letters,
-            mLetters = [];
-
-        for (let i = 0; i < mOptions.wordsGame.length; i++) {
-            let letter = `<div class="rosco-Letter rosco-LetterBlack" id="letterR${letras[i]}-${instance}">${letras[i]}</div>`;
-            const word = $.trim(mOptions.wordsGame[i].word);
-            if (word.length > 0) {
-                letter = `<div class="rosco-Letter" id="letterR${letras[i]}-${instance}">${$azquizgame.getRealLetter(letras[i])}</div>`;
+        audioLink.each(function () {
+            let iq = parseInt($(this).text());
+            if (!isNaN(iq) && iq < mOptions.wordsGame.length) {
+                mOptions.wordsGame[iq].audio = $(this).attr('href');
+                if (mOptions.wordsGame[iq].audio.length < 4) {
+                    mOptions.wordsGame[iq].audio = '';
+                }
             }
-            mLetters.push(letter);
+        });
+        mOptions.wordsGame =
+            $exeDevices.iDevice.gamification.helpers.shuffleAds(
+                mOptions.wordsGame
+            );
+
+        mOptions.wordsGame = $eXeCrucigrama.getQuestions(
+            mOptions.wordsGame,
+            mOptions.percentajeQuestions
+        );
+        if (mOptions.wordsGame.length > 10) {
+            mOptions.wordsGame = mOptions.wordsGame.splice(0, 10);
         }
 
-        return mLetters.join('');
+        mOptions.numberQuestions = mOptions.wordsGame.length;
+        mOptions.half = Math.ceil(mOptions.numberQuestions / 2);
+        return mOptions;
+    },
+
+    getQuestions: function (questions, percentage) {
+        const totalQuestions = questions.length;
+
+        if (percentage >= 100) return questions;
+
+        const num = Math.max(
+            2,
+            Math.round((percentage * totalQuestions) / 100)
+        );
+
+        if (num >= totalQuestions) return questions;
+
+        const indices = Array.from({ length: totalQuestions }, (_, i) => i);
+        $exeDevices.iDevice.gamification.helpers.shuffleAds(indices);
+
+        const selectedIndices = indices.slice(0, num).sort((a, b) => a - b),
+            selectedQuestions = selectedIndices.map(
+                (index) => questions[index]
+            );
+
+        return selectedQuestions;
+    },
+
+    createInterfaceCrucigrama: function (instance) {
+        const path = $eXeCrucigrama.idevicePath,
+            msgs = $eXeCrucigrama.options[instance].msgs,
+            mOptions = $eXeCrucigrama.options[instance],
+            html = `
+            <div class="CCGMP-MainContainer" id="ccgmMainContainer-${instance}">
+                <div class="CCGMP-GameMinimize" id="ccgmGameMinimize-${instance}">
+                    <a href="#" class="CCGMP-LinkMaximize" id="ccgmLinkMaximize-${instance}" title="${msgs.msgMaximize}">
+                        <img src="${path}ccccrossword.png" class="CCGMP-IconMinimize CCGMP-Activo" alt="">
+                        <div class="CCGMP-MessageMaximize" id="ccgmMessageMaximize-${instance}"></div>
+                    </a>
+                </div>
+                <div class="CCGMP-GameContainer" id="ccgmGameContainer-${instance}">
+                    <div class="CCGMP-GameScoreBoard">
+                        <div class="CCGMP-TimeNumber">
+                            <a href="#" id="ccgmShowDefinitions-${instance}" title="${msgs.msgShowDefinitions}">
+                                <strong><span class="sr-av">${msgs.msgShowDefinitions}:</span></strong>
+                                <div id="ccgmIconShowDefinitions-${instance}" class="exeQuextIcons exeQuextIcons-Definitions CCGMP-Activo"></div>
+                            </a>
+                            <strong><span class="sr-av">${msgs.msgTime}:</span></strong>
+                            <div class="exeQuextIcons exeQuextIcons-Time" title="${msgs.msgTime}"></div>
+                            <p id="ccgmPTime-${instance}" class="CCGMP-PTime">00:00</p>
+                            <a href="#" class="CCGMP-LinkMinimize" id="ccgmLinkMinimize-${instance}" title="${msgs.msgMinimize}">
+                                <strong><span class="sr-av">${msgs.msgMinimize}:</span></strong>
+                                <div class="exeQuextIcons exeQuextIcons-Minimize CCGMP-Activo"></div>
+                            </a>
+                            <a href="#" class="CCGMP-LinkFullScreen" id="ccgmLinkFullScreen-${instance}" title="${msgs.msgFullScreen}">
+                                <strong><span class="sr-av">${msgs.msgFullScreen}:</span></strong>
+                                <div class="exeQuextIcons exeQuextIcons-FullScreen CCGMP-Activo" id="ccgmFullScreen-${instance}"></div>
+                            </a>
+                        </div>
+                    </div>
+                    <div class="CCGMP-StartGame">
+                        <a href="#" id="ccgmStartGame-${instance}">${msgs.msgPlayStart}</a>
+                    </div>
+                    <div class="CCGMP-ShowClue" id="ccgmMessage-${instance}">
+                        <p class="CCGMP-PShowClue CCGMP-parpadea" id="ccgmPMessage-${instance}"></p>
+                    </div> 
+                    <div class="CCGMP-Message" id="ccgmShowClue-${instance}">
+                        <div class="sr-av">${msgs.msgClue}</div>
+                        <p class="CCGMP-PShowClue CCGMP-parpadea" id="ccgmPShowClue-${instance}"></p>
+                    </div>                    
+                    <div class="CCGMP-MultimediaDiv" id="ccgmMultimediaDiv-${instance}">
+                        <div class="CCGMP-Multimedia" id="ccgmMultimedia-${instance}">
+                            <div class="CCGMP-ActiveDefinition" id="ccgmActiveDefinition-${instance}">
+                                ${msgs.msgSelectWord}
+                            </div>
+                            <div id="ccgmCrossword-${instance}" class="CCGMP-Crucigrama"></div>
+                            <div id="ccgmAuthorBackImage-${instance}" class="CCGMP-AuthorBackImage"></div>
+                        </div>
+                        <div id="ccgmDefinitions-${instance}" class="CCGMP-Solutions">
+                            <span>${msgs.msgVerticals}</span>
+                            <ul id="ccgmDefinitionsVList-${instance}" class="CCGMP-SolutionsList"></ul>
+                            <span>${msgs.msgHorizontals}</span>
+                            <ul id="ccgmDefinitionsHList-${instance}" class="CCGMP-SolutionsList"></ul>
+                        </div>   
+                    </div>              
+                    <div class="CCGMP-Buttons">
+                        <a href="#" id="ccgmCheck-${instance}" class="CCGMP-Boton">${msgs.msgCheck}</a>                        
+                        <a href="#" id="ccgmSolutions-${instance}" class="CCGMP-Boton">${msgs.msgShowSolution}</a>
+                        <a href="#" id="ccgmReboot-${instance}" class="CCGMP-Boton">${msgs.msgReboot}</a>
+                    </div>       
+                    <div class="CCGMP-Cubierta" id="ccgmCubierta-${instance}" style="display:none">
+                            ${$eXeCrucigrama.getDetailMedia(instance)}
+                        <div class="CCGMP-CodeAccessDiv" id="ccgmCodeAccessDiv-${instance}">
+                            <div class="CCGMP-MessageCodeAccessE" id="ccgmMesajeAccesCodeE-${instance}"></div>
+                                <div class="CCGMP-DataCodeAccessE">
+                                    <label for="ccgmCodeAccessE-${instance}" class="sr-av">${msgs.msgCodeAccess}:</label>
+                                    <input type="text" class="CCGMP-CodeAccessE form-control" id="ccgmCodeAccessE-${instance}" placeholder="${msgs.msgCodeAccess}">
+                                    <a href="#" id="ccgmCodeAccessButton-${instance}" title="${msgs.msgReply}">
+                                        <strong><span class="sr-av">${msgs.msgReply}</span></strong>
+                                        <div class="exeQuextIcons-Submit CCGMP-Activo"></div>
+                                    </a>
+                                </div>                          
+                            </div>
+                                <div class="CCGMP-DivFeedBack" id="ccgmDivFeedBack-${instance}">
+                                <input type="button" id="ccgmFeedBackClose-${instance}" value="${msgs.msgClose}" class="feedbackbutton" style="cursor:pointer;" />
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+           ${$exeDevices.iDevice.gamification.scorm.addButtonScoreNew(mOptions, this.isInExe)}
+        `;
+        return html;
+    },
+
+    saveEvaluation: function (instance) {
+        const mOptions = $eXeCrucigrama.options[instance];
+
+        mOptions.scorerp = (mOptions.hits * 10) / mOptions.wordsGame.length;
+        $exeDevices.iDevice.gamification.report.saveEvaluation(
+            mOptions,
+            $eXeCrucigrama.isInExe
+        );
+    },
+
+    sendScore: function (auto, instance) {
+        const mOptions = $eXeCrucigrama.options[instance];
+
+        mOptions.scorerp = (mOptions.hits * 10) / mOptions.wordsGame.length;
+        mOptions.previousScore = $eXeCrucigrama.previousScore;
+        mOptions.userName = $eXeCrucigrama.userName;
+
+        $exeDevices.iDevice.gamification.scorm.sendScoreNew(auto, mOptions);
+
+        $eXeCrucigrama.previousScore = mOptions.previousScore;
+    },
+
+    clear: function (phrase) {
+        return phrase.replace(/[&\s\n\r]+/g, ' ').trim();
     },
 
     removeEvents: function (instance) {
-        $('#roscoCodeAccessButton-' + instance).off('click');
-        $('#roscoStartGame-' + instance).off('click');
-        $('#roscoLinkMaximize-' + instance).off('click touchstart');
-        $('#roscoLinkArrowMinimize-' + instance).off('click touchstart');
-        $('#roscoEdCodeAccess-' + instance).off('keydown');
-        $('#roscoBtnMoveOn-' + instance).off('click');
-        $('#roscoBtnReply-' + instance).off('click');
-        $('#roscoEdReply-' + instance).off('keydown');
-        $('#roscoLinkTypeGame-' + instance).off('click');
-        $('#roscoLinkAudio-' + instance).off('click');
-        $('#roscoMainContainer-' + instance)
+        let $mainContainer = $('#ccgmMainContainer-' + instance);
+
+        $mainContainer.off('click', '#ccgmFullLinkImage-' + instance);
+        $('#ccgmCheck-' + instance).off('click');
+        $('#ccgmReboot-' + instance).off('click');
+        $('#ccgmSolutions-' + instance).off('click');
+        $('#ccgmLinkMaximize-' + instance).off('click touchstart');
+        $('#ccgmLinkMinimize-' + instance).off('click touchstart');
+        $('#ccgmLinkFullScreen-' + instance).off('click touchstart');
+        $('#ccgmFeedBackClose-' + instance).off('click');
+        $('#ccgmLinkSound-' + instance).off('click');
+        $('#ccgmCodeAccessButton-' + instance).off('click touchstart');
+        $('#ccgmCodeAccessE-' + instance).off('keydown');
+        $('#ccgmMainContainer-' + instance)
             .closest('.idevice_node')
             .off('click', '.Games-SendScore');
-        $('#roscoLinkFullScreen-' + instance).off('click touchstart');
-        $('#roscoModeBoardOK-' + instance).off('click');
-        $('#roscoModeBoardKO-' + instance).off('click');
-        $('#roscoModeBoardMoveOn-' + instance).off('click');
-        $('#roscoShowWords-' + instance).off('click');
-        $('#roscoWordsClose-' + instance).off('click');
-        $('#roscoShowAll-' + instance).off('click');
-        $('#roscoShowHits-' + instance).off('click');
-        $('#roscoShowErrors-' + instance).off('click');
-        $('#roscoShowUnanswered-' + instance).off('click');
-        $('#roscoCubierta-' + instance).off('click', '.rosco-audioicon');
+        $('#ccgmStartGame-' + instance).off('click');
+        $('#ccgnBackgroundIcon-' + instance).off('click');
+        $('#ccgmShowDefinitions-' + instance).off('click');
 
-        $(window).off('unload.eXeRosco beforeunload.eXeRosco');
+        $mainContainer.off('click', '.CCGMP-LinkImageDef');
+        $mainContainer.off('click', '.CCGMP-LinkImage');
+        $mainContainer.off('click', '.CCGMP-LinkSound');
+        $mainContainer.off('click', '.CCGMP-LinkSoundDef');
+        $mainContainer.off('click', '.CCGMP-LinkClose');
+        $mainContainer.off('click touchend', '.CCGMP-InputWord');
+        $mainContainer.off('click touchend', '.CCGMP-InputWordDef');
+        $mainContainer.off('click touchend', '.CCGMP-Number');
+        $mainContainer.off('keydown', '.CCGMP-InputWord, .CCGMP-InputWordDef');
+        $mainContainer.off('input', '.CCGMP-InputWordDef, .CCGMP-InputWord');
+        $(window).off('unload.eXeCrucigrama beforeunload.eXeCrucigrama');
     },
 
     addEvents: function (instance) {
-        const mOptions = $azquizgame.options[instance],
-            $roscoMainContainer = $('#roscoMainContainer-' + instance),
-            $roscoTypeGame = $('#roscoTypeGame-' + instance);
+        $eXeCrucigrama.removeEvents(instance);
 
-        $azquizgame.removeEvents(instance);
+        const mOptions = $eXeCrucigrama.options[instance],
+            $mainContainer = $('#ccgmMainContainer-' + instance);
 
-        $('#roscoImage-' + instance).hide();
-        $('#roscoCursor-' + instance).hide();
-        $('#roscoQuestionDiv-' + instance).hide();
-        $('#roscoStartGame-' + instance).show();
-        $('#roscoPShowClue-' + instance).hide();
-
-        $('#roscoCodeAccessButton-' + instance).on('click', function (e) {
+        $('#ccgmFullLinkImage-' + instance).on('click', function (e) {
             e.preventDefault();
-            const keyIntroduced = $.trim(
-                    $('#roscoEdCodeAccess-' + instance).val()
-                ).toUpperCase(),
-                correctKey = $.trim(
-                    mOptions.itinerary.codeAccess
-                ).toUpperCase();
-            if (keyIntroduced === correctKey) {
-                $azquizgame.showCubiertaOptions(false, instance);
-                $('#roscoLinkMaximize-' + instance).trigger('click');
-                $azquizgame.startGame(instance);
-            } else {
-                $('#roscoMesajeAccesCodeE-' + instance)
-                    .fadeOut(300)
-                    .fadeIn(200)
-                    .fadeOut(300)
-                    .fadeIn(200);
-                $('#roscoEdCodeAccess-' + instance).val('');
-            }
-        });
-
-        $('#roscoStartGame-' + instance)
-            .text(mOptions.msgs.msgStartGame)
-            .on('click', function (e) {
-                e.preventDefault();
-                $azquizgame.startGame(instance);
-            });
-
-        $('#roscoLinkMaximize-' + instance).on(
-            'click touchstart',
-            function (e) {
-                e.preventDefault();
-                $('#roscoGameContainer-' + instance).show();
-                $('#roscoGame-' + instance).show();
-                $('#roscoGameMinimize-' + instance).hide();
-                $roscoTypeGame
-                    .removeClass('exeQuextIcons-RoscoRows')
-                    .addClass('exeQuextIcons-RoscoCanvas');
-                $('#roscoLinkTypeGame-' + instance)
-                    .find('span')
-                    .text(mOptions.msgs.msgHideRoulette)
-                    .attr('title', mOptions.msgs.msgHideRoulette);
-            }
-        );
-
-        $('#roscoLinkArrowMinimize-' + instance).on(
-            'click touchstart',
-            function (e) {
-                e.preventDefault();
-                $('#roscoGame-' + instance).hide();
-                $('#roscoLetters-' + instance).hide();
-                $('#roscoGameContainer-' + instance).hide();
-                $('#roscoGameMinimize-' + instance)
-                    .css('visibility', 'visible')
-                    .show();
-            }
-        );
-
-        $('#roscoEdCodeAccess-' + instance).on('keydown', function (event) {
-            if (event.which === 13 || event.keyCode === 13) {
-                $('#roscoCodeAccessButton-' + instance).trigger('click');
-                return false;
-            }
-            return true;
-        });
-
-        const mTime = mOptions.durationGame,
-            sTime =
-                $exeDevices.iDevice.gamification.helpers.getTimeToString(mTime),
-            altTurn =
-                mOptions.numberTurns === 1
-                    ? mOptions.msgOneRound
-                    : mOptions.msgTowRounds;
-
-        if (mOptions.numberTurns === 0) {
-            $('#roscoNumberRounds-' + instance).hide();
-            $('#roscoNumberRoundsSpan-' + instance).hide();
-        } else if (mOptions.numberTurns === 1) {
-            $('#roscoNumberRounds-' + instance)
-                .addClass('exeQuextIcons-OneRound')
-                .removeClass('exeQuextIcons-TwoRounds')
-                .attr('alt', 'One turn');
-        } else if (mOptions.numberTurns === 2) {
-            $('#roscoNumberRounds-' + instance)
-                .addClass('exeQuextIcons-TwoRounds')
-                .removeClass('exeQuextIcons-OneRound')
-                .attr('alt', 'Two turns');
-        }
-
-        $('#roscoNumberRoundsSpan-' + instance).text(altTurn);
-        $('#roscoPTime-' + instance).text(sTime);
-
-        $('#roscoBtnMoveOn-' + instance).on('click', function (e) {
-            e.preventDefault();
-            $azquizgame.passWord(instance);
-        });
-
-        $('#roscoBtnReply-' + instance).on('click', function (e) {
-            e.preventDefault();
-            $azquizgame.answerQuetion(instance);
-        });
-
-        $('#roscoEdReply-' + instance).on('keydown', function (event) {
-            if (event.which === 13 || event.keyCode === 13) {
-                $azquizgame.answerQuetion(instance);
-                return false;
-            }
-            return true;
-        });
-
-        const id = 'roscoCanvas-' + instance,
-            rosco = document.getElementById(id);
-
-        mOptions.ctxt = rosco.getContext('2d');
-        $azquizgame.drawRosco(instance);
-
-        $('#roscoLetters-' + instance).hide();
-        $('#roscoMessages-' + instance).hide();
-        $roscoTypeGame
-            .removeClass('exeQuextIcons-RoscoRows')
-            .addClass('exeQuextIcons-RoscoCanvas');
-
-        $('#roscoLinkTypeGame-' + instance).on('click', function (e) {
-            e.preventDefault();
-            let alt = mOptions.msgs.msgHideRoulette;
-            if ($roscoTypeGame.hasClass('exeQuextIcons-RoscoCanvas')) {
-                $roscoTypeGame
-                    .addClass('exeQuextIcons-RoscoRows')
-                    .removeClass('exeQuextIcons-RoscoCanvas');
-                $('#roscoLetters-' + instance).show();
-                $('#roscoMessages-' + instance).show();
-                $('#roscoGame-' + instance).hide();
-                alt = mOptions.msgs.msgShowRoulette;
-            } else {
-                $roscoTypeGame
-                    .addClass('exeQuextIcons-RoscoCanvas')
-                    .removeClass('exeQuextIcons-RoscoRows');
-                $('#roscoLetters-' + instance).hide();
-                $('#roscoMessages-' + instance).hide();
-                $('#roscoGame-' + instance).show();
-            }
-            $('#roscoLinkTypeGame-' + instance)
-                .attr('title', alt)
-                .find('span')
-                .text(alt);
-        });
-
-        $azquizgame.drawText(
-            mOptions.msgs.msgReady,
-            $azquizgame.colors.blue,
-            instance
-        );
-        $('#roscoPMessages-' + instance).css(
-            'color',
-            $azquizgame.colors.blackl
-        );
-        $azquizgame.drawRows(instance);
-
-        $('#roscoMainContainer-' + instance)
-            .closest('.idevice_node')
-            .on('click', '.Games-SendScore', function (e) {
-                e.preventDefault();
-                $azquizgame.sendScore(false, instance);
-                $azquizgame.saveEvaluation(instance);
-            });
-
-        if (mOptions.isScorm > 0) {
-            $exeDevices.iDevice.gamification.scorm.registerActivity(mOptions);
-        }
-
-        $(window).on('unload.eXeRosco beforeunload.eXeRosco', function () {
-            if (typeof $azquizgame.mScorm !== 'undefined') {
-                $exeDevices.iDevice.gamification.scorm.endScorm(
-                    $azquizgame.mScorm
+            const largeImageSrc = $('#ccgmImagePoint-' + instance).attr('src');
+            if (largeImageSrc && largeImageSrc.length > 3) {
+                $exeDevices.iDevice.gamification.helpers.showFullscreenImage(
+                    largeImageSrc,
+                    $('#ccgmGameContainer-' + instance)
                 );
-                $azquizgame.gameOver(1, instance);
             }
         });
 
-        $roscoTypeGame.show();
-
-        if ($roscoMainContainer.width() < 670) {
-            $roscoTypeGame
-                .addClass('exeQuextIcons-RoscoRows')
-                .removeClass('exeQuextIcons-RoscoCanvas');
-            $('#roscoLetters-' + instance).show();
-            $('#roscoMessages-' + instance).show();
-            $('#roscoGame-' + instance).hide();
-            $roscoTypeGame.hide();
-        }
-
-        $('#roscoLinkAudio-' + instance).on('click', function (e) {
+        $('#ccgmReboot-' + instance).hide();
+        $('#ccgmSolutions-' + instance).hide();
+        $('#ccgmCheck-' + instance).on('click', function (e) {
             e.preventDefault();
-            const audio = mOptions.wordsGame[mOptions.activeWord].audio;
-            $exeDevices.iDevice.gamification.media.stopSound();
-            $exeDevices.iDevice.gamification.media.playSound(audio);
+            $eXeCrucigrama.verifyCrossword(instance);
         });
 
-        $('#roscoLinkFullScreen-' + instance).on(
+        $('#ccgmReboot-' + instance).on('click', function (e) {
+            e.preventDefault();
+            $('#ccgmReboot-' + instance).hide();
+            $('#ccgmSolutions-' + instance).hide();
+            $eXeCrucigrama.repeatActivity(instance);
+            $('#ccgmCheck-' + instance).show();
+            $('#ccgmActiveDefinition-' + instance).html(
+                mOptions.msgs.msgSelectWord
+            );
+        });
+
+        $('#ccgmSolutions-' + instance).on('click', function (e) {
+            e.preventDefault();
+            $('#ccgmCheck-' + instance).hide();
+            $('#ccgmSolutions-' + instance).hide();
+            $eXeCrucigrama.showSolutions(instance);
+        });
+
+        $('#ccgmLinkMaximize-' + instance).on('click touchstart', function (e) {
+            e.preventDefault();
+            $('#ccgmGameContainer-' + instance).show();
+            $('#ccgmGameMinimize-' + instance).hide();
+        });
+
+        $('#ccgmLinkMinimize-' + instance).on('click touchstart', function (e) {
+            e.preventDefault();
+            $('#ccgmGameContainer-' + instance).hide();
+            $('#ccgmGameMinimize-' + instance)
+                .css('visibility', 'visible')
+                .show();
+        });
+
+        $('#ccgmGamerOver-' + instance).hide();
+        $('#ccgmCodeAccessDiv-' + instance).hide();
+
+        $('#ccgmLinkFullScreen-' + instance).on(
             'click touchstart',
             function (e) {
                 e.preventDefault();
                 const element = document.getElementById(
-                    'roscoMainContainer-' + instance
+                    'ccgmGameContainer-' + instance
                 );
                 $exeDevices.iDevice.gamification.helpers.toggleFullscreen(
                     element
@@ -634,1119 +2198,734 @@ var $azquizgame = {
             }
         );
 
-        $('#roscoModeBoardOK-' + instance).on('click', function (e) {
+        $('#ccgmFeedBackClose-' + instance).on('click', function (e) {
             e.preventDefault();
-            $azquizgame.answerQuetionBoard(true, instance);
+            $eXeCrucigrama.showCubiertaOptions(instance, false);
         });
 
-        $('#roscoModeBoardKO-' + instance).on('click', function (e) {
+        $('#ccgmLinkSound-' + instance).on('click', function (e) {
             e.preventDefault();
-            $azquizgame.answerQuetionBoard(false, instance);
+            let audio = mOptions.wordsGame[mOptions.activeQuestion].audio;
+            $exeDevices.iDevice.gamification.media.playSound(audio);
         });
 
-        $('#roscoModeBoardMoveOn-' + instance).on('click', function (e) {
-            e.preventDefault();
-            $azquizgame.passWord(instance);
-        });
-
-        $('#roscoShowWords-' + instance).on('click', function (e) {
-            e.preventDefault();
-            $azquizgame.renderWords(instance, true, 0);
-        });
-
-        $('#roscoWordsClose-' + instance).on('click', function (e) {
-            e.preventDefault();
-            $azquizgame.renderWords(instance, false, 0);
-        });
-
-        $('#roscoShowAll-' + instance).click(function (e) {
-            e.preventDefault();
-            $azquizgame.renderWords(instance, true, 0);
-        });
-
-        $('#roscoShowHits-' + instance).click(function (e) {
-            e.preventDefault();
-            $azquizgame.renderWords(instance, true, 1);
-        });
-
-        $('#roscoShowErrors-' + instance).click(function (e) {
-            e.preventDefault();
-            $azquizgame.renderWords(instance, true, 2);
-        });
-
-        $('#roscoShowUnanswered-' + instance).click(function (e) {
-            e.preventDefault();
-            $azquizgame.renderWords(instance, true, 3);
-        });
-
-        $('#roscoCubierta-' + instance).on(
-            'click',
-            '.rosco-audioicon',
-            function (e) {
-                e.preventDefault();
-                const audioSrc = $(this).data('audio');
-                new Audio(audioSrc).play();
-            }
-        );
+        $('#ccgmShowClue-' + instance).hide();
         if (mOptions.itinerary.showCodeAccess) {
-            $('#roscoMesajeAccesCodeE-' + instance).text(
+            $('#ccgmMesajeAccesCodeE-' + instance).text(
                 mOptions.itinerary.messageCodeAccess
             );
-            $('#roscoCodeAccessDiv-' + instance).show();
-            if (mOptions.showMinimize) {
-                $('#roscoCodeAccessDiv-' + instance).css({
-                    'margin-top': '-3em',
-                });
-            }
-            $('#roscoStartGame-' + instance).hide();
-            $('#roscoDivInstructions-' + instance).hide();
-            $azquizgame.showCubiertaOptions(true, instance);
+            $('#ccgmCodeAccessDiv-' + instance).show();
+            $eXeCrucigrama.showCubiertaOptions(instance, 0);
         }
 
+        $('#ccgmCodeAccessButton-' + instance).on(
+            'click touchstart',
+            function (e) {
+                e.preventDefault();
+                $eXeCrucigrama.enterCodeAccess(instance);
+            }
+        );
+
+        $('#ccgmCodeAccessE-' + instance).on('keydown', function (event) {
+            if (event.which == 13 || event.keyCode == 13) {
+                $eXeCrucigrama.enterCodeAccess(instance);
+                return false;
+            }
+            return true;
+        });
+
+        $('#ccgmPNumber-' + instance).text(mOptions.numberQuestions);
+
+        $(window).on(
+            'unload.eXeCrucigrama beforeunload.eXeCrucigrama',
+            function () {
+                $exeDevices.iDevice.gamification.media.stopSound();
+                if ($eXeCrucigrama.mScorm) {
+                    $exeDevices.iDevice.gamification.scorm.endScorm(
+                        $eXeCrucigrama.mScorm
+                    );
+                }
+            }
+        );
+
+        if (mOptions.isScorm > 0) {
+            $exeDevices.iDevice.gamification.scorm.registerActivity(mOptions);
+        }
+
+        $('#ccgmMainContainer-' + instance)
+            .closest('.idevice_node')
+            .on('click', '.Games-SendScore', function (e) {
+                e.preventDefault();
+                $eXeCrucigrama.sendScore(false, instance);
+                $eXeCrucigrama.saveEvaluation(instance);
+            });
+
+        $('#ccgmStartGame-' + instance).on('click', function (e) {
+            e.preventDefault();
+            $eXeCrucigrama.startGame(instance);
+        });
+
+        $mainContainer.on('click', '.CCGMP-LinkImageDef', function (e) {
+            e.preventDefault();
+            let num = $(this).data('number');
+            $eXeCrucigrama.showPoint(instance, num);
+        });
+
+        $mainContainer.on('click', '.CCGMP-LinkImage', function (e) {
+            e.preventDefault();
+            let num = $(this).data('number');
+            $eXeCrucigrama.showPoint(instance, num);
+        });
+
+        $mainContainer.on('click', '.CCGMP-LinkSound', function (e) {
+            e.preventDefault();
+            let num = $(this).data('number'),
+                sound = mOptions.wordsGame[num].audio;
+            $exeDevices.iDevice.gamification.media.playSound(sound);
+        });
+
+        $mainContainer.on('click', '.CCGMP-LinkSoundDef', function (e) {
+            e.preventDefault();
+            let num = $(this).data('number'),
+                sound = mOptions.wordsGame[num].audio;
+            $exeDevices.iDevice.gamification.media.playSound(sound);
+        });
+
+        $mainContainer.on('click', '.CCGMP-LinkClose', function (e) {
+            e.preventDefault();
+            $eXeCrucigrama.showCubiertaOptions(instance, false);
+            if (mOptions.modeGame) {
+                if (mOptions.focused == 1) {
+                    setTimeout(function () {
+                        $mainContainer.find('input.CCGMP-InputWordDef').focus();
+                    }, 0);
+                } else if (mOptions.focused == 0) {
+                    setTimeout(function () {
+                        const davi = $('#ccgmCrossord-' + instance)
+                            .find(`input[data-vi='${mOptions.activeQuestion}']`)
+                            .first();
+                        const dahi = $('#ccgmCrossword-' + instance)
+                            .find(`input[data-hi='${mOptions.activeQuestion}']`)
+                            .first();
+                        const $firstInput =
+                            mOptions.activeQuestion < mOptions.half
+                                ? davi
+                                : dahi;
+                        $firstInput.focus();
+                    }, 0);
+                }
+            } else {
+                setTimeout(function () {
+                    $mainContainer
+                        .find(
+                            `input.CCGMP-InputWord[data-number='${mOptions.activeQuestion}']`
+                        )
+                        .focus();
+                }, 0);
+            }
+        });
+
+        $('#ccgmStartGame-' + instance).show();
+        $('#ccgmActiveDefinition-' + instance).hide();
+        $('#ccgmCheck-' + instance).hide();
+        $('#ccgmShowDefinitions-' + instance).hide();
+
+        $('#ccgnBackgroundIcon-' + instance).on('click', function (e) {
+            e.preventDefault();
+            $('#ccgmCrossword-' + instance).toggleClass('CCGMP-NoBackground');
+        });
+
+        $mainContainer.on('click', '.CCGMP-FlexSpan', function (e) {
+            e.preventDefault();
+            const wordindex = $(this).data('number');
+            mOptions.activeQuestion = parseInt(wordindex);
+            $mainContainer
+                .find(
+                    `input.CCGMP-InputWordDef[data-number='${mOptions.activeQuestion}']`
+                )
+                .focus();
+        });
+
+        $('#ccgmShowDefinitions-' + instance).on('click', function (e) {
+            e.preventDefault();
+            if (mOptions.modeGame) {
+                $eXeCrucigrama.modeDefinitions(instance);
+            } else {
+                $eXeCrucigrama.modeCrossword(instance);
+            }
+            if (mOptions.solutionsShow) {
+                $eXeCrucigrama.showSolutions(instance);
+            }
+            mOptions.modeGame = !mOptions.modeGame;
+        });
+
+        $mainContainer.on(
+            'compositionstart',
+            '.CCGMP-InputWord, .CCGMP-InputWordDef',
+            function () {
+                mOptions._imeComposing = true;
+            }
+        );
+        $mainContainer.on(
+            'compositionend',
+            '.CCGMP-InputWord, .CCGMP-InputWordDef',
+            function () {
+                mOptions._imeComposing = false;
+                $(this).trigger('input');
+            }
+        );
+
+        $mainContainer.on(
+            'keydown',
+            '.CCGMP-InputWord, .CCGMP-InputWordDef',
+            function (e) {
+                if (mOptions.gameOver) {
+                    e.preventDefault();
+                    return;
+                }
+
+                if (
+                    e.isComposing ||
+                    (e.originalEvent && e.originalEvent.isComposing) ||
+                    e.keyCode === 229 ||
+                    e.key === 'Dead' ||
+                    mOptions._imeComposing
+                ) {
+                    return;
+                }
+                let ismobile = $eXeCrucigrama.isMobile(),
+                    input = $(this),
+                    maxLength =
+                        mOptions.wordsGame[mOptions.activeQuestion].word.length,
+                    currentValue = input.val(),
+                    cursorPosition = input[0].selectionStart;
+
+                const validKeys =
+                    /[a-zA-ZçÇáéíóúÁÉÍÓÚñÑäëïöüÄËÏÖÜ0-9àÀèÈòÒïÏüÜ]/;
+                if (e.key === 'Tab' && $(this).hasClass('CCGMP-InputWordDef')) {
+                    $exeDevices.iDevice.gamification.media.stopSound();
+                    e.preventDefault();
+                    let currentNumber = parseInt($(this).data('number')) + 1;
+                    // Wrap around to 0 if we exceed the number of words
+                    if (currentNumber >= mOptions.wordsGame.length) {
+                        currentNumber = 0;
+                    }
+                    mOptions.activeQuestion = currentNumber;
+                    let input = $('#ccgmMainContainer-' + instance).find(
+                        `input.CCGMP-InputWordDef[data-number=${currentNumber}]`
+                    );
+                    if (input.length > 0) {
+                        input.focus();
+                        input[0].setSelectionRange(0, 0);
+                    }
+                } else if (
+                    $eXeCrucigrama.isIgnoredKey(e.key) ||
+                    e.key === 'ArrowDown' ||
+                    e.key === 'ArrowUp' ||
+                    e.key === 'Delete'
+                ) {
+                    e.preventDefault();
+                } else if (e.key === 'ArrowLeft') {
+                    //
+                } else if (e.key === 'ArrowRight') {
+                    //
+                } else if (validKeys.test(e.key)) {
+                    return;
+                } else if (!ismobile && e.key === 'Backspace') {
+                    e.preventDefault();
+                    if (cursorPosition > 0 && cursorPosition <= maxLength) {
+                        let val =
+                            currentValue.slice(0, cursorPosition - 1) +
+                            '_' +
+                            currentValue.slice(cursorPosition);
+                        input.val(val);
+                        cursorPosition -= 1;
+                        input[0].setSelectionRange(
+                            cursorPosition,
+                            cursorPosition
+                        );
+                        $eXeCrucigrama.updateCrossword(
+                            instance,
+                            mOptions.activeQuestion,
+                            $(this)
+                        );
+                        if ($(this).hasClass('CCGMP-InputWordDef')) {
+                            $eXeCrucigrama.updateInputs(
+                                instance,
+                                mOptions.activeQuestion
+                            );
+                        }
+                    }
+                } else {
+                    e.preventDefault();
+                }
+            }
+        );
+
+        $mainContainer.on(
+            'input',
+            '.CCGMP-InputWordDef, .CCGMP-InputWord',
+            function () {
+                if (mOptions.gameOver || mOptions._imeComposing) return;
+                let input = $(this),
+                    maxLength =
+                        mOptions.wordsGame[mOptions.activeQuestion].word.length,
+                    currentValue = (input.val() || '').normalize('NFC'),
+                    cursorPosition = input[0].selectionStart;
+                const validKeys = /[\p{L}\p{N}_]/u;
+
+                let codepoints = Array.from(currentValue),
+                    lastChar = codepoints[cursorPosition - 1] || '',
+                    text = '',
+                    isValid = validKeys.test(lastChar);
+
+                if (isValid && currentValue.length >= maxLength) {
+                    text = $eXeCrucigrama.deleteCharacter(
+                        currentValue,
+                        cursorPosition,
+                        maxLength
+                    );
+                } else if (currentValue.length <= maxLength) {
+                    text = $eXeCrucigrama.insertSpace(
+                        currentValue,
+                        cursorPosition,
+                        maxLength
+                    );
+                } else {
+                    text = $eXeCrucigrama.deleteCharacter(
+                        currentValue,
+                        cursorPosition - 1,
+                        maxLength
+                    );
+                }
+
+                $eXeCrucigrama.updateCrossword(
+                    instance,
+                    mOptions.activeQuestion,
+                    $(this)
+                );
+
+                if ($(this).hasClass('CCGMP-InputWordDef')) {
+                    $eXeCrucigrama.updateInputs(
+                        instance,
+                        mOptions.activeQuestion
+                    );
+                }
+
+                input.val(text);
+                input[0].setSelectionRange(cursorPosition, cursorPosition);
+            }
+        );
+
+        $mainContainer.on('click touchend', '.CCGMP-InputWord', function () {
+            mOptions.focused = 2;
+            if (mOptions.gameOver) {
+                $(this).blur();
+                return;
+            }
+            let cursorPosition = this.selectionStart;
+            this.setSelectionRange(cursorPosition, cursorPosition);
+        });
+
+        $mainContainer.on('click touchend', '.CCGMP-InputWordDef', function () {
+            mOptions.focused = 1;
+            if (mOptions.gameOver) {
+                $(this).blur();
+                return;
+            }
+            let cursorPosition = this.selectionStart;
+            this.setSelectionRange(cursorPosition, cursorPosition);
+        });
+
+        $mainContainer.on('click touchend', '.CCGMP-Number', function (e) {
+            e.preventDefault();
+            if (mOptions.gameOver) return;
+            $(this).closest('.CCGMP-Cell').find('input').click();
+            $(this).closest('.CCGMP-Cell').find('input').focus();
+        });
+
+        $mainContainer.find('.exeQuextIcons-Time').hide();
+        $('#ccgmPTime-' + instance).hide();
+
+        if (mOptions.hasBack && mOptions.authorBackImage.length > 0) {
+            $('#ccgmAuthorBackImage-' + instance).html(
+                mOptions.authorBackImage
+            );
+            $('#ccgmAuthorBackImage-' + instance).css('display', 'flex');
+        }
+
+        if (mOptions.time == 0 && !mOptions.showCodeAccess) {
+            mOptions.gameStarted = false;
+            $eXeCrucigrama.startGame(instance);
+        }
+
+        $eXeCrucigrama.updateTime(mOptions.time * 60, instance);
         setTimeout(function () {
             $exeDevices.iDevice.gamification.report.updateEvaluationIcon(
                 mOptions,
                 this.isInExe
             );
         }, 500);
-
-        $('#roscoFullLinkImage-' + instance).on('click', function (e) {
-            e.preventDefault();
-            const largeImageSrc = $('#roscoImage-' + instance).attr('src');
-            if (largeImageSrc && largeImageSrc.length > 3) {
-                $exeDevices.iDevice.gamification.helpers.showFullscreenImage(
-                    largeImageSrc,
-                    $('#roscoGameContainer-' + instance)
-                );
-            }
-        });
     },
 
-    refreshGame: function (instance) {
-        const mOptions = $azquizgame.options[instance];
+    deleteCharacter(text, position, maxLength) {
+        let currentValue = text,
+            charArray = currentValue.split('');
 
-        if (!mOptions) return;
+        position = position < 0 ? 0 : position;
+        charArray.splice(position, 1);
 
-        const $roscoMainContainer = $('#roscoMainContainer-' + instance);
-        $roscoTypeGame = $('#roscoTypeGame-' + instance);
+        let modifiedString = charArray.join('');
+        modifiedString = modifiedString.slice(0, maxLength);
+        return modifiedString;
+    },
 
-        if (!$roscoMainContainer.is(':visible ')) return;
+    insertSpace: function (text, position, maxLength) {
+        let currentValue = text,
+            charArray = currentValue.split('');
+        position = position < 0 ? 0 : position;
+        charArray.splice(position + 1, 0, '_');
+        let modifiedString = charArray.join('');
+        modifiedString = modifiedString.slice(0, maxLength);
+        return modifiedString;
+    },
 
-        $roscoTypeGame.show();
-        if ($roscoMainContainer.width() < 650) {
-            $roscoTypeGame
-                .addClass('exeQuextIcons-RoscoRows')
-                .removeClass('exeQuextIcons-RoscoCanvas');
-            $('#roscoLetters-' + instance).show();
-            $('#roscoMessages-' + instance).show();
-            $('#roscoGame-' + instance).hide();
-            $roscoTypeGame.hide();
+    isMobile: function () {
+        const userAgent =
+                navigator.userAgent || navigator.vendor || window.opera,
+            mobileDeviceRegex =
+                /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Windows Phone|Kindle|Silk|PlayBook|BB10|Mobile|Tablet|Nintendo|Switch|PSP|PlayStation/i,
+            isTouchDevice =
+                'ontouchstart' in window || navigator.maxTouchPoints > 0,
+            isSmallScreen = window.innerWidth <= 768;
+        return (
+            mobileDeviceRegex.test(userAgent) || isTouchDevice || isSmallScreen
+        );
+    },
+
+    modeDefinitions: function (instance) {
+        let mOptions = $eXeCrucigrama.options[instance],
+            $icon = $('#ccgmIconShowDefinitions-' + instance);
+        $icon.removeClass('exeQuextIcons-Definitions exeQuextIcons-Crossword');
+        $('#ccgmMultimedia-' + instance).hide();
+        $icon.addClass('exeQuextIcons-Crossword');
+        $eXeCrucigrama.updateInputs(instance, -1);
+        $('#ccgmDefinitions-' + instance).show();
+        if (mOptions.activeQuestion >= 0) {
+            setTimeout(function () {
+                $('#ccgmMainContainer-' + instance)
+                    .find(
+                        `input.CCGMP-InputWordDef[data-number='${mOptions.activeQuestion}']`
+                    )
+                    .focus();
+                mOptions.focused = 2;
+            }, 0);
         }
-        $azquizgame.refreshImageActiveNeo(instance);
+    },
+
+    completeCrosswordFromInputs: function (instance, preserveExisting = false) {
+        let mOptions = $eXeCrucigrama.options[instance];
+
+        $('#ccgmMainContainer-' + instance)
+            .find('.CCGMP-InputWordDef')
+            .each(function () {
+                let wordindex = $(this).data('number'),
+                    inputWord = $(this).val();
+
+                if (inputWord && mOptions.mappedWords[wordindex]) {
+                    inputWord.split('').forEach((char, index) => {
+                        let letter = char === '_' ? '' : char,
+                            row = mOptions.mappedWords[wordindex][index].row,
+                            col = mOptions.mappedWords[wordindex][index].col;
+                        const $cellInput = $(`#ccgmCrossword-${instance}`).find(
+                            `input[data-row=${row}][data-col=${col}]`
+                        );
+                        if ($cellInput.length) {
+                            // Si preserveExisting es true, solo rellenar celdas vacías
+                            // Si es false, sobrescribir siempre (comportamiento original para verificación)
+                            if (!preserveExisting || !$cellInput.val()) {
+                                $cellInput.val(letter);
+                            }
+                        }
+                    });
+                }
+            });
+    },
+    modeCrossword: function (instance) {
+        let mOptions = $eXeCrucigrama.options[instance],
+            $icon = $('#ccgmIconShowDefinitions-' + instance);
+
+        $icon.removeClass('exeQuextIcons-Definitions exeQuextIcons-Crossword');
+        $icon.addClass('exeQuextIcons-Definitions');
+        $('#ccgmDefinitions-' + instance).hide();
+        $('#ccgmMultimedia-' + instance).show();
+
+        // Preserve existing values (like hint letters) when copying from definitions
+        $eXeCrucigrama.completeCrosswordFromInputs(instance, true);
+
+        mOptions.focused = 0;
+        if (mOptions.activeQuestion >= 0) {
+            setTimeout(function () {
+                const davi = $('#ccgmCrossword-' + instance)
+                    .find(`input[data-vi='${mOptions.activeQuestion}']`)
+                    .first();
+                const dahi = $('#ccgmCrossword-' + instance)
+                    .find(`input[data-hi='${mOptions.activeQuestion}']`)
+                    .first();
+                const $firstInput =
+                    mOptions.activeQuestion < mOptions.half ? davi : dahi;
+                $firstInput.focus();
+                $eXeCrucigrama.updateInputPresentation(
+                    instance,
+                    mOptions.activeQuestion
+                );
+            }, 0);
+        }
+    },
+
+    updateCrossword: function (instance, wordindex, $input) {
+        let mOptions = $eXeCrucigrama.options[instance],
+            word = mOptions.wordsGame[wordindex].word;
+        const $crossword = $('#ccgmCrossword-' + instance);
+
+        let inputs = $input.val(),
+            $crucigramaCells = $crossword.find(`input[data-hi='${wordindex}']`);
+
+        if (wordindex < mOptions.half) {
+            $crucigramaCells = $crossword.find(`input[data-vi='${wordindex}']`);
+        }
+
+        $crucigramaCells.val('');
+        for (let i = 0; i < word.length; i++) {
+            let $inputCell = $crucigramaCells.eq(i);
+            if (i < inputs.length && i < $crucigramaCells.length) {
+                let currentChar = inputs.charAt(i);
+                if (currentChar === '_') {
+                    $inputCell.val('');
+                } else {
+                    $inputCell.val(currentChar);
+                }
+            }
+        }
+    },
+
+    isIgnoredKey: function (key) {
+        const ignoredKeys = [
+            'Shift',
+            'Control',
+            'Alt',
+            'Meta',
+            'CapsLock',
+            'AltGraph',
+            'Tab',
+            'Escape',
+            'Insert',
+            'PageUp',
+            'PageDown',
+            'End',
+            'Home',
+            'F1',
+            'F2',
+            'F3',
+            'F4',
+            'F5',
+            'F6',
+            'F7',
+            'F8',
+            'F9',
+            'F10',
+            'F11',
+            'F12',
+            'Enter',
+        ];
+        return ignoredKeys.includes(key);
     },
 
     startGame: function (instance) {
-        const mOptions = $azquizgame.options[instance];
+        const mOptions = $eXeCrucigrama.options[instance];
 
         if (mOptions.gameStarted) return;
 
-        $('#roscoStartGame-' + instance).hide();
-        $('#roscoCodeAccessDiv-' + instance).hide();
-        $('#roscoQuestionDiv-' + instance).show();
-        $('#roscoDivInstructions-' + instance).hide();
-        $('#roscoShowWords-' + instance).hide();
+        $('#ccgmShowClue-' + instance).hide();
+        $('#ccgmCheck-' + instance).show();
+        $('#ccgmStartGame-' + instance).hide();
+        $('#ccgmActiveDefinition-' + instance).show();
+        $('#ccgmShowDefinitions-' + instance).show();
+        $('#ccgmPShowClue-' + instance).text('');
+        $('#ccgmMessage-' + instance).hide();
+        $('#ccgmActiveDefinition-' + instance).show();
+        $('#ccgmActiveDefinition-' + instance).html(
+            mOptions.msgs.msgSelectWord
+        );
 
-        mOptions.obtainedClue = false;
         mOptions.hits = 0;
-        mOptions.solucion = '';
-        mOptions.errors = 0;
         mOptions.score = 0;
-        mOptions.counter = mOptions.durationGame;
-        mOptions.gameActived = false;
+        mOptions.activeQuestion = -1;
+        mOptions.counter = 0;
         mOptions.gameOver = false;
-        mOptions.activeGameSpin = 1;
-        mOptions.validWords = 0;
-        mOptions.answeredWords = 0;
-        mOptions.activeWord = -1;
+        mOptions.obtainedClue = false;
+        mOptions.solutionsShow = false;
 
-        for (let i = 0; i < mOptions.wordsGame.length; i++) {
-            const word = mOptions.wordsGame[i];
-            word.state = word.word.trim().length === 0 ? 0 : 1;
-            word.correct = 0;
+        if (mOptions.time > 0) {
+            $('#ccgmGameContainer-' + instance)
+                .find('.exeQuextIcons-Time')
+                .show();
+            $('#ccgmPTime-' + instance).show();
+            mOptions.counter = mOptions.time * 60;
+            mOptions.counterClock = setInterval(function () {
+                let $node = $('#ccgmMainContainer-' + instance);
+                let $content = $('#node-content');
+                if (
+                    !$node.length ||
+                    ($content.length && $content.attr('mode') === 'edition')
+                ) {
+                    clearInterval(mOptions.counterClock);
+                    return;
+                }
+                if (mOptions.gameStarted) {
+                    mOptions.counter--;
+                    $eXeCrucigrama.updateTime(mOptions.counter, instance);
+                    if (mOptions.counter <= 0) {
+                        clearInterval(mOptions.counterClock);
+                        $eXeCrucigrama.verifyCrossword(instance);
+                        return;
+                    }
+                }
+            }, 1000);
+            $eXeCrucigrama.updateTime(mOptions.time * 60, instance);
+        }
 
-            let mBackColor = $azquizgame.colors.black;
-            if (word.state === 1) {
-                mOptions.validWords++;
-                mBackColor = $azquizgame.colors.blue;
-            }
-
-            const letter = `#letterR${mOptions.letters.charAt(i)}-${instance}`;
-            $(letter).css({
-                'background-color': mBackColor,
-                color: $azquizgame.colors.white,
+        $('#ccgmCrossword-' + instance)
+            .find('input')
+            .each(function () {
+                $(this).prop('readonly', false);
             });
-        }
 
-        $azquizgame.updateTime(mOptions.durationGame, instance);
-        $azquizgame.drawRosco(instance);
-
-        mOptions.counterClock = setInterval(function () {
-            let $node = $('#roscoMainContainer-' + instance);
-            let $content = $('#node-content');
-            if (
-                !$node.length ||
-                ($content.length && $content.attr('mode') === 'edition')
-            ) {
-                clearInterval(mOptions.counterClock);
-                return;
-            }
-            $azquizgame.updateTime(mOptions.counter, instance);
-            mOptions.counter--;
-            if (mOptions.counter <= 0) {
-                clearInterval(mOptions.counterClock);
-                $azquizgame.gameOver(1, instance);
-                return;
-            }
-        }, 1000);
-
-        $('#roscoPShowClue-' + instance)
-            .text('')
-            .hide();
-        $('#roscotPHits-' + instance).text(mOptions.hits);
-        $('#roscotPErrors-' + instance).text(mOptions.errors);
-        $('#roscoBtnReply-' + instance).prop('disabled', false);
-        $('#roscoBtnMoveOn-' + instance).prop('disabled', false);
-        $('#roscoEdReply-' + instance)
-            .prop('disabled', false)
-            .focus();
-
-        const mTime = mOptions.durationGame,
-            sTime =
-                $exeDevices.iDevice.gamification.helpers.getTimeToString(mTime),
-            altTurn =
-                mOptions.numberTurns === 1
-                    ? mOptions.msgOneRound
-                    : mOptions.msgTowRounds;
-
-        if (mOptions.numberTurns === 0) {
-            $('#roscoNumberRounds-' + instance).hide();
-            $('#roscoNumberRoundsSpan-' + instance).hide();
-        } else if (mOptions.numberTurns === 1) {
-            $('#roscoNumberRounds-' + instance)
-                .addClass('exeQuextIcons-OneRound')
-                .removeClass('exeQuextIcons-TwoRounds')
-                .attr('alt', 'One turn');
-        } else if (mOptions.numberTurns === 2) {
-            $('#roscoNumberRounds-' + instance)
-                .addClass('exeQuextIcons-TwoRounds')
-                .removeClass('exeQuextIcons-OneRound')
-                .attr('alt', 'Two turns');
-        }
-
-        $('#roscoNumberRoundsSpan-' + instance).text(altTurn);
-        $('#roscoPTime-' + instance).text(sTime);
-
-        mOptions.gameActived = true;
         mOptions.gameStarted = true;
-        $azquizgame.newWord(instance);
+    },
+
+    enterCodeAccess: function (instance) {
+        const mOptions = $eXeCrucigrama.options[instance];
+
+        if (
+            mOptions.itinerary.codeAccess.toLowerCase() ==
+            $('#ccgmCodeAccessE-' + instance)
+                .val()
+                .toLowerCase()
+        ) {
+            $('#ccgmLinkMaximize-' + instance).trigger('click');
+            $eXeCrucigrama.showCubiertaOptions(instance, false);
+            $eXeCrucigrama.startGame(instance);
+        } else {
+            $('#ccgmMesajeAccesCodeE-' + instance)
+                .fadeOut(300)
+                .fadeIn(200)
+                .fadeOut(300)
+                .fadeIn(200);
+            $('#ccgmCodeAccessE-' + instance).val('');
+        }
     },
 
     updateTime: function (tiempo, instance) {
-        const mTime =
-                $exeDevices.iDevice.gamification.helpers.getTimeToString(
-                    tiempo
-                ),
-            mOptions = $azquizgame.options[instance];
-
-        $('#roscoPTime-' + instance).text(mTime);
-
-        if (mOptions.gameActived && mOptions.activeWord !== -1) {
-            $azquizgame.drawLetterActive(mOptions.activeWord, instance);
-        }
+        let mTime =
+            $exeDevices.iDevice.gamification.helpers.getTimeToString(tiempo);
+        $('#ccgmPTime-' + instance).text(mTime);
     },
 
-    getRetroFeedMessages: function (iHit, instance) {
-        const mOptions = $azquizgame.options[instance],
-            msgs = mOptions.msgs,
-            sMessages = iHit
-                ? msgs.msgSuccesses.split('|')
-                : msgs.msgFailures.split('|');
-        return sMessages[Math.floor(Math.random() * sMessages.length)];
-    },
-
-    gameOver: function (type, instance) {
-        const mOptions = $azquizgame.options[instance],
-            msgs = mOptions.msgs;
+    gameOver: function (instance) {
+        const mOptions = $eXeCrucigrama.options[instance],
+            score = ((mOptions.hits * 10) / mOptions.numberQuestions).toFixed(
+                2
+            );
 
         clearInterval(mOptions.counterClock);
-        $azquizgame.updateTime(mOptions.counter, instance);
-
-        $('#roscoDivModeBoard-' + instance).hide();
-        $('#roscoMessages-' + instance).show();
-        $('#roscoStartGame-' + instance).show();
-        $('#roscoQuestionDiv-' + instance).hide();
-        $('#roscoDivInstructions-' + instance).show();
-
-        let msg = msgs.msgYouHas
-            .replace('%1', mOptions.hits)
-            .replace('%2', mOptions.errors);
-
-        mOptions.activeWord = 0;
-        mOptions.answeredWords = 0;
-        mOptions.gameOver = true;
-
-        $azquizgame.drawRosco(instance);
-        $azquizgame.drawText(
-            msgs.msgGameOver,
-            $azquizgame.colors.red,
-            instance
-        );
-
-        $('#roscoEdReply-' + instance).val('');
-        $azquizgame.showImageNeo('', instance);
 
         mOptions.gameStarted = false;
-
-        if (mOptions.isScorm === 1) {
-            const score = ((mOptions.hits * 10) / mOptions.validWords).toFixed(
-                2
-            );
-            $azquizgame.sendScore(true, instance);
-            $('#roscoRepeatActivity-' + instance).text(
-                mOptions.msgs.msgYouScore + ': ' + score
-            );
-            $azquizgame.initialScore = score;
-        }
-
-        $azquizgame.saveEvaluation(instance);
-        $('#roscoPMessages-' + instance)
-            .text(msg)
-            .css('color', $azquizgame.colors.blackl);
-        $exeDevices.iDevice.gamification.media.stopSound();
-        $('#roscoLinkAudio-' + instance).hide();
-        $('#roscoShowWords-' + instance).show();
-    },
-
-    drawText: function (texto, color, instance) {
-        const ctxt = $azquizgame.options[instance].ctxt,
-            mOptions = $azquizgame.options[instance],
-            whidthCtxt = $azquizgame.mcanvas.width,
-            heightCtxt = $azquizgame.mcanvas.height,
-            radiusLetter = mOptions.radiusLetter,
-            xCenter = whidthCtxt / 2,
-            yCenter = heightCtxt / 2,
-            wText = whidthCtxt - 7 * radiusLetter,
-            xMessage = xCenter - wText / 2,
-            yMessage = yCenter,
-            font = 'bold 18px sans-serif';
-
-        ctxt.font = font;
-        const whidthText = ctxt.measureText(texto).width,
-            xText = xCenter - whidthText / 2,
-            yText = yMessage;
-
-        ctxt.fillStyle = 'transparent';
-        ctxt.fillRect(xMessage, yMessage, wText, 30);
-        ctxt.textAlig = 'center';
-        ctxt.textBaseline = 'top';
-        ctxt.fillStyle = color;
-        ctxt.fillText(texto, xText, yText + 3);
-        ctxt.closePath();
-        $('#roscoPMessages-' + instance)
-            .css('color', color)
-            .text(texto);
-    },
-
-    getRandomDefinition: function (definition) {
-        const array = definition.split('|');
-
-        if (array.length > 1) {
-            const index = Math.floor(Math.random() * array.length);
-            return array[index].trim();
-        }
-
-        return definition;
-    },
-
-    showWord: function (activeLetter, instance) {
-        const mOptions = $azquizgame.options[instance],
-            msgs = mOptions.msgs,
-            mWord = mOptions.wordsGame[activeLetter],
-            definition = $azquizgame.getRandomDefinition(mWord.definition),
-            letter = $azquizgame.getRealLetter(
-                mOptions.letters.charAt(activeLetter)
-            ),
-            start = (
-                mWord.type === 0 ? msgs.msgStartWith : msgs.msgContaint
-            ).replace('%1', letter);
-
-        $('#roscoPDefinition-' + instance).html(definition);
-        $('#roscoPStartWith-' + instance).text(start);
-        $('#roscoEdReply-' + instance).val('');
-        $('#roscoPMessages-' + instance).val('');
-        $('#roscoLinkAudio-' + instance).hide();
-
-        $azquizgame.drawRosco(instance);
-        $azquizgame.drawText('', $azquizgame.colors.blue, instance);
-
-        mOptions.gameActived = true;
-
-        $('#roscoBtnReply-' + instance).prop('disabled', false);
-        $('#roscoBtnMoveOn-' + instance).prop('disabled', false);
-        $azquizgame.showImageNeo(mWord.url, instance);
-        $('#roscoEdReply-' + instance)
-            .prop('disabled', false)
-            .focus();
-
-        if (mOptions.isScorm === 1) {
-            const score = ((mOptions.hits * 10) / mOptions.validWords).toFixed(
-                2
-            );
-            $azquizgame.sendScore(true, instance);
-            $('#roscoRepeatActivity-' + instance).text(
-                mOptions.msgs.msgYouScore + ': ' + score
-            );
-        }
-
-        $azquizgame.saveEvaluation(instance);
-
-        if (mWord.audio.length > 4) $('#roscoLinkAudio-' + instance).show();
-
+        mOptions.gameOver = true;
         $exeDevices.iDevice.gamification.media.stopSound();
 
-        if (mWord.audio.trim().length > 4)
-            $exeDevices.iDevice.gamification.media.playSound(mWord.audio.trim());
-
-        if (mOptions.modeBoard)
-            $('#roscoDivModeBoard-' + instance)
-                .css('display', 'flex')
-                .fadeIn();
-
-        const html = $('#roscoPDefinition-' + instance).html(),
-            latex = $exeDevices.iDevice.gamification.math.hasLatex(html);
-
-        if (latex)
-            $exeDevices.iDevice.gamification.math.updateLatex(
-                '#roscoPDefinition-' + instance
+        if (mOptions.isScorm == 1) {
+            $eXeCrucigrama.sendScore(true, instance);
+            $('#ccgmRepeatActivity-' + instance).text(
+                mOptions.msgs.msgYouScore + ': ' + score
             );
-    },
-
-    showImageNeo: function (url, instance) {
-        const mOptions = $azquizgame.options[instance],
-            mWord = mOptions.wordsGame[mOptions.activeWord],
-            $cursor = $('#roscoCursor-' + instance),
-            $noImage = $('#roscoNoImage-' + instance),
-            $Image = $('#roscoImage-' + instance),
-            $Author = $('#roscoAuthor-' + instance),
-            $FullImage = $('#roscoFullLinkImage-' + instance).hide();
-
-        $Image.attr('alt', 'No image');
-        $cursor.hide();
-        $Image.hide();
-        $noImage.hide();
-        $FullImage.hide();
-
-        if (!$.trim(url).length) {
-            $cursor.hide();
-            $Image.hide();
-            $noImage.show();
-            $Author.text('');
-            return false;
+            $eXeCrucigrama.initialScore = score;
         }
 
-        $Image
-            .attr('src', '')
-            .attr('src', url)
-            .on('load', function () {
-                if (
-                    !this.complete ||
-                    typeof this.naturalWidth === 'undefined' ||
-                    this.naturalWidth === 0
-                ) {
-                    $cursor.hide();
-                    $Image.hide();
-                    $noImage.show();
-                    $Author.text('');
-                } else {
-                    $Image.show();
-                    $cursor.show();
-                    $noImage.hide();
-                    $Author.text(mWord.author);
-                    $Image.attr('alt', mWord.alt);
-                    $FullImage.show();
-                    $azquizgame.positionPointer(instance);
-                }
-            })
-            .on('error', function () {
-                $cursor.hide();
-                $Image.hide();
-                $noImage.show();
-                $Author.text('');
-            });
-    },
-
-    positionPointer: function (instance) {
-        const mOptions = $azquizgame.options[instance],
-            mWord = mOptions.wordsGame[mOptions.activeWord],
-            x = parseFloat(mWord.x) || 0,
-            y = parseFloat(mWord.y) || 0,
-            $cursor = $('#roscoCursor-' + instance);
-
-        $cursor.hide();
-
-        if (x > 0 || y > 0) {
-            const containerElement = document.getElementById(
-                    'roscoMultimedia-' + instance
-                ),
-                containerPos = containerElement.getBoundingClientRect(),
-                imgElement = document.getElementById('roscoImage-' + instance),
-                imgPos = imgElement.getBoundingClientRect(),
-                marginTop = imgPos.top - containerPos.top,
-                marginLeft = imgPos.left - containerPos.left,
-                cursorX = marginLeft + x * imgPos.width,
-                cursorY = marginTop + y * imgPos.height;
-
-            $cursor.show();
-            $cursor.css({ left: cursorX, top: cursorY, 'z-index': 30 });
-        }
-    },
-
-    newWord: function (instance) {
-        const mOptions = $azquizgame.options[instance];
-
-        if (mOptions.gameOver) return;
-
-        const mActiveWord = $azquizgame.updateNumberWord(
-            mOptions.activeWord,
-            instance
-        );
-
-        if (mActiveWord === null) {
-            $azquizgame.gameOver(0, instance);
-        } else {
-            mOptions.activeWord = mActiveWord;
-            $azquizgame.showWord(mActiveWord, instance);
-        }
-    },
-
-    refreshImageActiveNeo: function (instance) {
-        if (typeof $azquizgame.options[instance] == 'undefined') return;
-        const mOptions = $azquizgame.options[instance],
-            mWord = mOptions.wordsGame[mOptions.activeWord],
-            imgElement = document.querySelector('img#roscoImage-' + instance);
-
-        if (mWord && mWord.url && mWord.url.length > 3) {
+        if (mOptions.itinerary.showClue) {
             if (
-                imgElement &&
-                !imgElement.complete &&
-                (!imgElement.src || imgElement.src === '')
+                (mOptions.hits * 100) / mOptions.numberQuestions >=
+                mOptions.itinerary.percentageClue
             ) {
-                $azquizgame.showImageNeo(mWord.url, instance);
-            } else {
-                $('#roscoCursor-' + instance).hide();
-                setTimeout(() => $azquizgame.positionPointer(instance), 1000);
-            }
-        }
-    },
-
-    updateNumberWord: function (quextion, instance) {
-        let numActiveWord = quextion;
-        const mOptions = $azquizgame.options[instance];
-
-        while (true) {
-            numActiveWord++;
-
-            if (numActiveWord > mOptions.letters.length - 1) {
-                if (
-                    mOptions.numberTurns === 0 ||
-                    mOptions.activeGameSpin < mOptions.numberTurns
-                ) {
-                    if (mOptions.answeredWords >= mOptions.validWords)
-                        return null;
-
-                    if (mOptions.numberTurns > 0) {
-                        mOptions.activeGameSpin++;
-                        $('#roscoNumberRounds-' + instance)
-                            .addClass('exeQuextIcons-OneRound')
-                            .removeClass('exeQuextIcons-TwoRounds')
-                            .attr('alt', 'Two turns');
-                        $('#roscoNumberRoundsSpan-' + instance).text(
-                            mOptions.msgOneRound
-                        );
-                    }
-
-                    numActiveWord = 0;
-                } else {
-                    return null;
-                }
-            }
-
-            const state = mOptions.wordsGame[numActiveWord].state;
-            if (state === 1) return numActiveWord;
-        }
-    },
-
-    passWord: function (instance) {
-        const mOptions = $azquizgame.options[instance],
-            letter =
-                '#letterR' +
-                mOptions.letters.charAt(mOptions.activeWord) +
-                '-' +
-                instance;
-
-        mOptions.gameActived = false;
-
-        $(letter).css({
-            'background-color': $azquizgame.colors.blue,
-            color: $azquizgame.colors.white,
-        });
-
-        $azquizgame.newWord(instance);
-
-        if (mOptions.gameStarted) {
-            $azquizgame.drawText('', $azquizgame.colors.blue, instance);
-            $('#roscoEdReply-' + instance).focus();
-        }
-
-        $azquizgame.drawRosco(instance);
-    },
-
-    answerQuetion: function (instance) {
-        const mOptions = $azquizgame.options[instance],
-            msgs = mOptions.msgs;
-
-        if (!mOptions.gameActived) return;
-
-        mOptions.gameActived = false;
-
-        const letter = mOptions.letters[mOptions.activeWord],
-            answord = $('#roscoEdReply-' + instance)
-                .val()
-                .trim();
-
-        if (answord === '') {
-            mOptions.gameActived = true;
-            $azquizgame.drawText(
-                msgs.msgIndicateWord,
-                $azquizgame.colors.red,
-                instance
-            );
-            return;
-        }
-
-        const word = $.trim(mOptions.wordsGame[mOptions.activeWord].word);
-        let Hit = true,
-            mFontColor = $azquizgame.colors.white,
-            mBackColor = $azquizgame.colors.blue;
-
-        $('#roscoBtnReply-' + instance).prop('disabled', true);
-        $('#roscoBtnMoveOn-' + instance).prop('disabled', true);
-        $('#roscoEdReply-' + instance).prop('disabled', true);
-
-        const checkWord = mOptions.caseSensitive ? word : word.toUpperCase(),
-            checkAnsword = mOptions.caseSensitive
-                ? answord
-                : answord.toUpperCase();
-
-        if ($azquizgame.checkWord(checkWord, checkAnsword)) {
-            mOptions.hits++;
-            mOptions.wordsGame[mOptions.activeWord].state = 2;
-            mBackColor = $azquizgame.colors.green;
-        } else {
-            mOptions.wordsGame[mOptions.activeWord].state = 3;
-            mOptions.errors++;
-            Hit = false;
-            mBackColor = $azquizgame.colors.red;
-        }
-
-        mOptions.wordsGame[mOptions.activeWord].correct = Hit ? 1 : 2;
-        const percentageHits = (mOptions.hits / mOptions.validWords) * 100;
-
-        mOptions.answeredWords++;
-
-        $('#roscotPHits-' + instance).text(mOptions.hits);
-        $('#roscotPErrors-' + instance).text(mOptions.errors);
-
-        let timeShowSolution = mOptions.showSolution
-                ? mOptions.timeShowSolution * 1000
-                : 1000,
-            clue = false;
-
-        if (
-            mOptions.itinerary.showClue &&
-            percentageHits >= mOptions.itinerary.percentageClue &&
-            !mOptions.obtainedClue
-        ) {
-            mOptions.obtainedClue = true;
-            timeShowSolution = 4000;
-            clue = true;
-            $('#roscoPShowClue-' + instance)
-                .show()
-                .text(
+                $('#ccgmPShowClue-' + instance).text(
                     mOptions.msgs.msgInformation +
                         ': ' +
                         mOptions.itinerary.clueGame
                 );
-        }
-
-        const letterSelector = '#letterR' + letter + '-' + instance;
-        $(letterSelector).css({
-            'background-color': mBackColor,
-            color: mFontColor,
-        });
-
-        $azquizgame.drawRosco(instance);
-
-        setTimeout(() => {
-            $azquizgame.newWord(instance);
-        }, timeShowSolution);
-
-        $azquizgame.drawMessage(Hit, word, clue, instance);
-    },
-
-    answerQuetionBoard: function (value, instance) {
-        const mOptions = $azquizgame.options[instance];
-        if (!mOptions.gameActived) return;
-
-        mOptions.gameActived = false;
-
-        $('#roscoBtnReply-' + instance).prop('disabled', true);
-        $('#roscoBtnMoveOn-' + instance).prop('disabled', true);
-        $('#roscoEdReply-' + instance).prop('disabled', true);
-
-        let Hit = true,
-            word = $.trim(mOptions.wordsGame[mOptions.activeWord].word),
-            mFontColor = $azquizgame.colors.white,
-            mBackColor = $azquizgame.colors.blue;
-
-        word = mOptions.caseSensitive ? word : word.toUpperCase();
-
-        if (value) {
-            mOptions.hits++;
-            mOptions.wordsGame[mOptions.activeWord].state = 2;
-            mBackColor = $azquizgame.colors.green;
-        } else {
-            mOptions.wordsGame[mOptions.activeWord].state = 3;
-            mOptions.errors++;
-            Hit = false;
-            mBackColor = $azquizgame.colors.red;
-        }
-
-        const percentageHits = (mOptions.hits / mOptions.validWords) * 100;
-
-        mOptions.answeredWords++;
-        mOptions.wordsGame[mOptions.activeWord].correct = Hit ? 1 : 2;
-
-        $('#roscotPHits-' + instance).text(mOptions.hits);
-        $('#roscotPErrors-' + instance).text(mOptions.errors);
-
-        let timeShowSolution = mOptions.showSolution
-            ? mOptions.timeShowSolution * 1000
-            : 1000;
-        let clue = false;
-
-        if (
-            mOptions.itinerary.showClue &&
-            percentageHits >= mOptions.itinerary.percentageClue &&
-            !mOptions.obtainedClue
-        ) {
-            mOptions.obtainedClue = true;
-            timeShowSolution = 4000;
-            clue = true;
-            $('#roscoPShowClue-' + instance)
-                .show()
-                .text(
-                    mOptions.msgs.msgInformation +
-                        ': ' +
-                        mOptions.itinerary.clueGame
-                );
-        }
-
-        const letterSelector =
-            '#letterR' + mOptions.letters[mOptions.activeWord] + '-' + instance;
-
-        $(letterSelector).css({
-            'background-color': mBackColor,
-            color: mFontColor,
-        });
-
-        $azquizgame.drawRosco(instance);
-
-        setTimeout(() => {
-            $azquizgame.newWord(instance);
-        }, timeShowSolution);
-
-        $azquizgame.drawMessage(Hit, word, clue, instance);
-    },
-
-    checkWord: function (word, answord) {
-        const cleanWord = (str) =>
-                $.trim(str)
-                    .replace(/\s+/g, ' ')
-                    .replace(/[.,;]$/, ''),
-            sWord = cleanWord(word),
-            sAnsWord = cleanWord(answord);
-
-        if (sWord.indexOf('|') === -1) {
-            return sWord === sAnsWord;
-        }
-
-        const words = sWord.split('|');
-
-        for (let i = 0; i < words.length; i++) {
-            const mword = cleanWord(words[i]);
-            if (mword === sAnsWord) {
-                return true;
-            }
-        }
-
-        return false;
-    },
-
-    wrapText: function (context, text, x, y, maxWidth, lineHeight) {
-        let mx = x,
-            words = text.split(' '),
-            my = words.length < 12 ? y + 20 : y,
-            line = '',
-            testWidth = 0;
-
-        for (let n = 0; n < words.length; n++) {
-            let testLine = line + words[n] + ' ',
-                metrics = context.measureText(testLine);
-            testWidth = metrics.width;
-            if (testWidth > maxWidth && n > 0) {
-                const lineWidth = context.measureText(line).width;
-                mx = x + (maxWidth - lineWidth) / 2 + 5;
-                context.fillText(line, mx, my);
-                line = words[n] + ' ';
-                my += lineHeight;
             } else {
-                line = testLine;
-            }
-        }
-        mx = x + (maxWidth - context.measureText(line).width) / 2 + 5;
-        context.fillText(line, mx, my);
-    },
-
-    roundRect: function (x, y, width, height, radius, fill, stroke, ctxt) {
-        if (typeof stroke == 'undefined') stroke = true;
-
-        if (typeof radius === 'undefined') radius = 5;
-
-        if (typeof radius === 'number') {
-            radius = {
-                tl: radius,
-                tr: radius,
-                br: radius,
-                bl: radius,
-            };
-        } else {
-            let defaultRadius = {
-                tl: 0,
-                tr: 0,
-                br: 0,
-                bl: 0,
-            };
-            for (let side in defaultRadius) {
-                radius[side] = radius[side] || defaultRadius[side];
-            }
-        }
-
-        ctxt.beginPath();
-        ctxt.moveTo(x + radius.tl, y);
-        ctxt.lineTo(x + width - radius.tr, y);
-        ctxt.quadraticCurveTo(x + width, y, x + width, y + radius.tr);
-        ctxt.lineTo(x + width, y + height - radius.br);
-        ctxt.quadraticCurveTo(
-            x + width,
-            y + height,
-            x + width - radius.br,
-            y + height
-        );
-        ctxt.lineTo(x + radius.bl, y + height);
-        ctxt.quadraticCurveTo(x, y + height, x, y + height - radius.bl);
-        ctxt.lineTo(x, y + radius.tl);
-        ctxt.quadraticCurveTo(x, y, x + radius.tl, y);
-        ctxt.closePath();
-        $azquizgame.setShadow(ctxt, 'rgba(100, 100, 100, 0.5)', 3, 3, 4);
-
-        if (stroke) ctxt.stroke();
-        if (fill) ctxt.fill();
-
-        $azquizgame.setShadow(ctxt, 'white', 0, 0, 0);
-    },
-
-    drawRosco: function (instance) {
-        let ctxt = $azquizgame.options[instance].ctxt,
-            whidthCtxt = $azquizgame.mcanvas.width,
-            heightCtxt = $azquizgame.mcanvas.height,
-            mOptions = $azquizgame.options[instance];
-
-        ctxt.clearRect(0, 0, whidthCtxt, heightCtxt);
-
-        let radiusLetter = mOptions.radiusLetter,
-            xCenter = Math.round(whidthCtxt / 2),
-            yCenter = Math.round(heightCtxt / 2),
-            radius = whidthCtxt / 2 - radiusLetter * 2,
-            letter = '';
-
-        for (let i = 0; i < mOptions.letters.length; i++) {
-            letter = $azquizgame.getRealLetter(mOptions.letters.charAt(i));
-            let angle =
-                    (mOptions.angleSize * (i + mOptions.letters.length - 6)) %
-                    mOptions.letters.length,
-                yPoint = yCenter + radius * Math.sin(angle),
-                xPoint = xCenter + radius * Math.cos(angle),
-                font = $azquizgame.getFontSizeLetters(instance);
-            ctxt.beginPath();
-            ctxt.lineWidth = 0;
-            ctxt.strokeStyle = $azquizgame.colors.black;
-            ctxt.arc(xPoint, yPoint, radiusLetter, 0, 2 * Math.PI);
-            let state = $azquizgame.options[instance].wordsGame[i].state,
-                color = $azquizgame.getColorState(state);
-            $azquizgame.setShadow(ctxt, 'rgba(0, 0, 0, 0.5)', 3, 3, 4);
-            ctxt.fillStyle = color;
-            ctxt.fill();
-            $azquizgame.setShadow(ctxt, 'white', 0, 0, 0);
-            ctxt.font = font;
-            let whidthLetter = ctxt.measureText(letter).width;
-            ctxt.textAlig = 'center';
-            ctxt.textBaseline = 'middle';
-            ctxt.fillStyle = $azquizgame.colors.white;
-            ctxt.fillText(letter, xPoint - whidthLetter / 2, yPoint + 2);
-            ctxt.closePath();
-        }
-    },
-
-    drawLetterActive: function (iNumber, instance) {
-        const mOptions = $azquizgame.options[instance];
-
-        if (mOptions.gameActived) {
-            let activeWord = mOptions.activeWord,
-                word = mOptions.wordsGame[activeWord],
-                mFontColor = $azquizgame.colors.white,
-                mBackColor = $azquizgame.colors.blue;
-            if (word.state == 2) {
-                mFontColor = $azquizgame.colors.white;
-                mBackColor = $azquizgame.colors.green;
-            } else if (word.state == 3) {
-                mFontColor = $azquizgame.colors.white;
-                mBackColor = $azquizgame.colors.red;
-            } else if (mOptions.activaLetra) {
-                mFontColor = $azquizgame.colors.black;
-                mBackColor = $azquizgame.colors.yellow;
-            }
-
-            if (iNumber == activeWord) {
-                let letter = '',
-                    mLetter = mOptions.letters.charAt(iNumber);
-                letter = '#letterR' + mLetter + '-' + instance;
-                mLetter = $azquizgame.getRealLetter(
-                    mOptions.letters.charAt(iNumber)
+                $('#ccgmPShowClue-' + instance).text(
+                    mOptions.msgs.msgTryAgain.replace(
+                        '%s',
+                        mOptions.itinerary.percentageClue
+                    )
                 );
-                $(letter).css({
-                    'background-color': mBackColor,
-                    color: mFontColor,
-                });
-                let ctxt = mOptions.ctxt,
-                    angle =
-                        (mOptions.angleSize *
-                            (iNumber + mOptions.letters.length - 6)) %
-                        mOptions.letters.length,
-                    radiusLetter = mOptions.radiusLetter,
-                    xCenter = $azquizgame.mcanvas.width / 2,
-                    yCenter = $azquizgame.mcanvas.height / 2,
-                    radius = $azquizgame.mcanvas.width / 2 - radiusLetter * 2,
-                    yPoint = yCenter + radius * Math.sin(angle),
-                    xPoint = xCenter + radius * Math.cos(angle),
-                    font = $azquizgame.getFontSizeLetters(instance);
-                ctxt.beginPath();
-                ctxt.strokeStyle = $azquizgame.colors.white;
-                ctxt.arc(xPoint, yPoint, radiusLetter, 0, 2 * Math.PI);
-                ctxt.fillStyle = mBackColor;
-                ctxt.fill();
-                ctxt.font = font;
-                ctxt.lineWidth = 2;
-                const whidthLetter = ctxt.measureText(mLetter).width;
-                ctxt.textAlig = 'center';
-                ctxt.textBaseline = 'middle';
-                ctxt.fillStyle = mFontColor;
-                ctxt.fillText(mLetter, xPoint - whidthLetter / 2, yPoint + 2);
-                ctxt.closePath();
             }
-            mOptions.activaLetra = mOptions.activaLetra ? false : true;
-        }
-    },
-
-    drawMessage: function (Hit, word, pista, instance) {
-        let mOptions = $azquizgame.options[instance],
-            mAnimo = $azquizgame.getRetroFeedMessages(Hit, instance),
-            ctxt = mOptions.ctxt,
-            whidthCtxt = $azquizgame.mcanvas.width,
-            heightCtxt = $azquizgame.mcanvas.height,
-            wCuadro = whidthCtxt - 70,
-            xMessage = whidthCtxt / 2 - wCuadro / 2,
-            yMessage = heightCtxt / 2,
-            xCenter = whidthCtxt / 2,
-            font = 'bold 18px sans-serif';
-
-        ctxt.font = font;
-
-        let anchoTextoAnimo = ctxt.measureText(mAnimo).width,
-            posTextoAnimoX = xCenter - anchoTextoAnimo / 2,
-            posTextoAnimoY = mOptions.showSolution ? yMessage - 10 : yMessage;
-
-        ctxt.fillStyle = $azquizgame.colors.white;
-
-        let lColor = Hit ? $azquizgame.colors.green : $azquizgame.colors.red;
-        ctxt.strokeStyle = '#DDDDDD';
-        ctxt.lineWidth = 2;
-
-        $azquizgame.roundRect(xMessage + 5, 130, 277, 120, 8, true, true, ctxt);
-        ctxt.textAlig = 'center';
-        ctxt.textBaseline = 'top';
-        ctxt.fillStyle = lColor;
-
-        if (pista) {
-            mAnimo = mOptions.msgs.msgInformation;
-            posTextoAnimoY = yMessage - 15;
-            posTextoAnimoX = xCenter - ctxt.measureText(mAnimo).width / 2;
-            $azquizgame.wrapText(
-                ctxt,
-                mAnimo + ': ' + mOptions.itinerary.clueGame,
-                xMessage + 13,
-                yMessage - 32,
-                257,
-                24
-            );
-            $('#roscoPMessages-' + instance)
-                .css('color', lColor)
-                .text(mAnimo + ': ' + mOptions.itinerary.clueGame);
-            return;
+            $('#ccgmShowClue-' + instance).show();
         }
 
-        ctxt.fillText(mAnimo, posTextoAnimoX, posTextoAnimoY);
-        $('#roscoPMessages-' + instance).text(mAnimo);
-        if (mOptions.showSolution) {
-            $('#roscoPMessages-' + instance).text(mAnimo + ' ' + word);
-            ctxt.fillText(mAnimo, posTextoAnimoX, posTextoAnimoY);
-            $azquizgame.wrapText(
-                ctxt,
-                word,
-                xMessage + 10,
-                posTextoAnimoY + 10,
-                257,
-                24
-            );
-        }
-        $('#roscoPMessages-' + instance).css('color', lColor);
-        $('#roscoEdReply-' + instance).focus();
-    },
+        $('#ccgmCrossword-' + instance)
+            .find('input')
+            .prop('readonly', true);
+        $('#ccgmMainContainer-' + instance)
+            .find('.CCGMP-InputWord')
+            .prop('readonly', true);
+        $('#ccgmMainContainer-' + instance)
+            .find('.CCGMP-InputWordDef')
+            .prop('readonly', true);
 
-    getRealLetter: function (letter) {
-        const lettersMap = {
-            0: 'L·L',
-            1: 'SS',
-        };
-        return lettersMap[letter] || letter;
-    },
-
-    getCaracterLetter: function (letter) {
-        const caracterMap = {
-            'L·L': '0',
-            SS: '1',
-        };
-        return caracterMap[letter] || letter;
-    },
-
-    getFontSizeLetters: function (instance) {
-        const mOptions = $azquizgame.options[instance];
-        let mFont = '20px';
-
-        if (mOptions.letters.length < 18) {
-            mFont = '24px';
-        } else if (mOptions.letters.length < 24) {
-            mFont = '22px';
-        } else if (mOptions.letters.length < 32) {
-            mFont = '20px';
-        } else if (mOptions.letters.length < 36) {
-            mFont = '16px';
-        } else if (mOptions.letters.length < 40) {
-            mFont = '14px';
-        } else if (mOptions.letters.length < 44) {
-            mFont = '12px';
-        } else if (mOptions.letters.length < 50) {
-            mFont = '10px';
-        } else if (mOptions.letters.length < 100) {
-            mFont = '8px';
-        }
-
-        return `bold ${mFont} sans-serif`;
-    },
-
-    drawRows: function (instance) {
-        const mOptions = $azquizgame.options[instance],
-            mFontColor = $azquizgame.colors.white;
-
-        mOptions.wordsGame.forEach((word, i) => {
-            const mBackColor =
-                word.word.trim().length === 0
-                    ? $azquizgame.colors.black
-                    : $azquizgame.colors.blue;
-            const letterSelector = `#letterR${mOptions.letters.charAt(i)}-${instance}`;
-
-            $(letterSelector).css({
-                'background-color': mBackColor,
-                color: mFontColor,
-            });
-        });
-    },
-
-    setShadow: function (ctx, color, ox, oy, blur) {
-        ctx.shadowColor = color;
-        ctx.shadowOffsetX = ox;
-        ctx.shadowOffsetY = oy;
-        ctx.shadowBlur = blur;
-    },
-
-    getColorState: function (state) {
-        switch (state) {
-            case 0:
-                return $azquizgame.colors.black;
-            case 1:
-                return $azquizgame.colors.blue;
-            case 2:
-                return $azquizgame.colors.green;
-            case 3:
-                return $azquizgame.colors.red;
-            default:
-                return $azquizgame.colors.blue;
-        }
-    },
-
-    saveEvaluation: function (instance) {
-        const mOptions = $azquizgame.options[instance];
-        mOptions.scorerp = (mOptions.hits * 10) / mOptions.validWords;
-        $exeDevices.iDevice.gamification.report.saveEvaluation(
-            mOptions,
-            $azquizgame.isInExe
+        $eXeCrucigrama.highlightWord(
+            instance,
+            mOptions.wordIndex,
+            mOptions.word >= mOptions.half
         );
+        $eXeCrucigrama.saveEvaluation(instance);
+        $eXeCrucigrama.showFeedBack(instance);
     },
 
-    sendScore: function (auto, instance) {
-        const mOptions = $azquizgame.options[instance];
+    showFeedBack: function (instance) {
+        const mOptions = $eXeCrucigrama.options[instance],
+            puntos = (mOptions.hits * 100) / mOptions.wordsGame.length;
 
-        mOptions.scorerp = (mOptions.hits * 10) / mOptions.validWords;
+        if (mOptions.feedBack) {
+            if (puntos >= mOptions.percentajeFB) {
+                $eXeCrucigrama.showCubiertaOptions(instance, 1);
+            } else {
+                let message = $('#ccgmPMessage-' + instance).text();
+                message +=
+                    ' ' +
+                    mOptions.msgs.msgTryAgain.replace(
+                        '%s',
+                        mOptions.percentajeFB
+                    );
+                $eXeCrucigrama.showMessage(1, message, instance);
+            }
+        }
+    },
 
-        mOptions.previousScore = $azquizgame.previousScore;
-        mOptions.userName = $azquizgame.userName;
-
-        $exeDevices.iDevice.gamification.scorm.sendScoreNew(auto, mOptions);
-
-        $azquizgame.previousScore = mOptions.previousScore;
+    showMessage: function (type, message, instance) {
+        let colors = [
+                '#555555',
+                $eXeCrucigrama.borderColors.red,
+                $eXeCrucigrama.borderColors.green,
+                $eXeCrucigrama.borderColors.blue,
+                $eXeCrucigrama.borderColors.deepblue,
+            ],
+            color = colors[type];
+        $('#ccgmPMessage-' + instance).text(message);
+        $('#ccgmPMessage-' + instance).css('color', color);
+        $('#ccgmMessage-' + instance).fadeIn();
     },
 };
-
 $(function () {
-    $azquizgame.init();
+    $eXeCrucigrama.init();
 });
